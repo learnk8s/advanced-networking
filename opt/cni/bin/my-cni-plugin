@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# Read NetConf. Example NetConf:
+# {
+#   "cniVersion": "0.4.0",
+#   "name": "my-pod-network",
+#   "type": "my-cni-plugin",
+#   "myPodCidrRange": "20.0.0.0/24"
+# }
+netconf=$(cat /dev/stdin)
+
+# Log all passed arguments (env vars and NetConf)
+cat <<EOF
+CNI_COMMAND=$CNI_COMMAND
+CNI_CONTAINERID=$CNI_CONTAINERID
+CNI_NETNS=$CNI_NETNS
+CNI_IFNAME=$CNI_IFNAME
+CNI_PATH=$CNI_PATH
+$netconf
+EOF
+
+# Extract relevant parameters from NetConf
+network_name=$(jq -r ".name" <<<"$netconf")
+pod_cidr_range=$(jq -r ".myPodCidrRange" <<<"$netconf")
+
+case "$CNI_COMMAND" in
+ADD)
+  # Invoke the host-local IPAM CNI plugin to select an IP address for the Pod
+  # Example response from host-local:
+  # {
+  #   "cniVersion": "0.3.1",
+  #   "ips": [
+  #     {
+  #       "version": "4",
+  #       "address": "20.0.0.4/24",
+  #       "gateway": "20.0.0.1"
+  #     }
+  #   ],
+  #   "dns": {}
+  # }
+
+  # TODO: parse CNI_PATH instead of hardcoding /opt/cni/bin (default in K8s/Docker)
+  ipam_response=$(cat <<EOF | /opt/cni/bin/host-local'
+{
+  "cniVersion": "0.3.1",
+  "name": "$network_name",
+  "ipam": {
+    "type": "host-local",
+    "ranges": [ [ { "subnet": "$pod_cidr_range" } ] ]
+  }
+}
+EOF
+)
+  pod_ip=$(jq -r '.ips[0].address' <<<"$ipam_response")
+  gateway_ip=$(jq -r '.ips[0].gateway' <<<"$ipam_response")
+  host_ifname=veth$RANDOM
+
+  # Make the pod netns discoverable by 'ip' as $CNI_CONTAINERID
+	mkdir -p /var/run/netns/ && ln -s "$CNI_NETNS" /var/run/netns/"$CNI_CONTAINERID"
+
+  # Create veth pair in the default netns
+	ip link add "$CNI_IFNAME" type veth peer name "$host_ifname"
+
+  # Enable host interface and add it to the bridge in the default netns
+	ip link set "$host_ifname" up master cni0 
+
+  # Enable pod interface and add it to the pod netns
+	ip link set "$CNI_IFNAME" up netns "$CNI_CONTAINERID"
+
+  # Assign IP address to pod interface in pod netns
+	ip netns exec $CNI_CONTAINERID ip addr add $pod_ip $CNI_IFNAME
+  
+  # Add a default route to the pod netns
+	ip netns exec $CNI_CONTAINERID ip route add default via $gateway_ip dev $CNI_IFNAME 
+  
+  ;;
+
+DEL)
+;;
+CHECK)
+;;
+VERSION)
+  echo '{"cniVersion":"0.4.0","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1","0.4.0"]}'
+;;
+*)
+  echo "Unknown CNI command: $CNI_COMMAND" 
+  exit 1
+;;
+esac
