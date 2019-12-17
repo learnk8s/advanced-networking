@@ -1,24 +1,18 @@
 #!/bin/bash
 
-# TODO: target CNI spec 0.3.1 instead of 0.4.0
-# Reasons:
-#   - Default CNI plugins bundled with kubeadm are outdated and support only CNI 0.3.1 (https://github.com/kubernetes/kubeadm/issues/1976)
-#     If this plugin targets 0.4.0 and if you want to reuse the same NetConf for the IPAM plugin, you would need to edit the cniVersion field of the NetConf.
-#     If this plugin also targets only 0.3.0, this is not necessary.
-#   - CNI 0.4.0 adds the CHECK command which has a rather complicated implementation. By targeting CNI 0.3.1, it is not necessary to implement this command.
-# CNI spec 0.3.1: https://github.com/containernetworking/cni/blob/spec-v0.3.1/SPEC.md
-
+# Read NetConf
+netconf=$(cat /dev/stdin)
 # Example NetConf:
 # {
 #   "cniVersion": "0.3.1",
 #   "name": "my-pod-network",
 #   "type": "my-cni-plugin",
 #   "myPodCidrRange": "20.0.0.0/24",
-#   "myBridgeIp": "20.0.0.1"
+#   "myBridgeIp": "20.0.0.1",
+#   "myBridgeName": "cni0"
 # }
-netconf=$(cat /dev/stdin)
 
-# Log all input (env vars and NetConf)
+# Log the entire input for this plugin invocation
 cat <<EOF
 CNI_COMMAND=$CNI_COMMAND
 CNI_CONTAINERID=$CNI_CONTAINERID
@@ -29,88 +23,86 @@ $netconf
 EOF
 
 # Extract values from NetConf
-network_name=$(jq -r ".name" <<<"$netconf")
 pod_cidr_range=$(jq -r ".myPodCidrRange" <<<"$netconf")
+bridge_ip=$(jq -r ".myBridgeIp" <<<"$netconf")
+bridge_name=$(jq -r ".myBridgeName" <<<"$netconf")
+
+# Add 'ipam' field to a copy of NetConf for the host-local IPAM plugin
+ipam_netconf=$(jq ". += {
+  ipam: {
+    subnet: \"$pod_cidr_range\",
+    gateway: \"$bridge_ip\"
+  }
+}" <<<"$netconf")
 
 case "$CNI_COMMAND" in
 
-# Called by the kubelet in the process of creating a Pod (after creating a
-# network namespace for this Pod).
-ADD)
-  # Invoke the host-local IPAM plugin to select an IP address for the Pod.
-  # Env vars are supplied unchanged to host-local and a new NetConf is provided.
+  # Invoked by kubelet during Pod creation (after creating a netns for the Pod)
+  ADD)
+    # Make the Pod netns discoverable by 'ip' as $CNI_CONTAINERID
+    mkdir -p /var/run/netns/ && ln -s "$CNI_NETNS" /var/run/netns/"$CNI_CONTAINERID"
 
-  # The IPAM Plugin receives all the same environment variables that were passed in to the CNI plugin. Just like the CNI plugin, IPAM receives the network configuration via stdin.
+    # Name of host-end of the veth pair (name of the Pod-end is $CNI_IFNAME)
+    host_ifname=veth$RANDOM
 
-  # TODO: reuse NetConf for host-local, just add 'ipam' field
-  ipam_response=$(cat <<EOF | /opt/cni/bin/host-local'
-{
-  "cniVersion": "0.3.1",
-  "name": "$network_name",
-  "ipam": {
-    "type": "host-local",
-    "ranges": [ [ { "subnet": "$pod_cidr_range" } ] ]
-  }
-}
-EOF
-)
-  # Example host-local response:
-  # {
-  #   "cniVersion": "0.3.1",
-  #   "ips": [
-  #     {
-  #       "version": "4",
-  #       "address": "20.0.0.4/24",
-  #       "gateway": "20.0.0.1"
-  #     }
-  #   ],
-  #   "dns": {}
-  # }
-  pod_ip=$(jq -r '.ips[0].address' <<<"$ipam_response")
-  gateway_ip=$(jq -r '.ips[0].gateway' <<<"$ipam_response")  # The bridge in the default namespaces
-  # TODO: IP address of the bridge is assigned manually. So, should just this IP address be used instead of using what the IPAM plugin determines (host-local just takes first IP address of CIDR range as the gateway IP address)?
-  # => Pass IP address of bridge as additional field in NetConf.
+    # Default netns: create new veth pair
+    ip link add "$CNI_IFNAME" type veth peer name "$host_ifname"
 
-  # Make the Pod netns discoverable by 'ip' as $CNI_CONTAINERID
-	mkdir -p /var/run/netns/ && ln -s "$CNI_NETNS" /var/run/netns/"$CNI_CONTAINERID"
+    # Default netns: enable host-end of the pair and add it to the bridge
+    ip link set "$host_ifname" up master "$bridge_name"
 
-  # Name of host interface of the veth pair (Pod interface name is $CNI_IFNAME)
-  host_ifname=veth$RANDOM
+    # Default netns: enable Pod-end of the pair and put it into the Pod netns
+    ip link set "$CNI_IFNAME" up netns "$CNI_CONTAINERID"
+    
+    # Pod netns: add a default route to the bridge via the Pod-end of the pair
+    ip netns exec "$CNI_CONTAINERID" ip route add default via "$bridge_ip" dev "$CNI_IFNAME"
 
-  # Create veth pair in the default netns
-	ip link add "$CNI_IFNAME" type veth peer name "$host_ifname"
+    # Invoke host-local IPAM plugin to select an IP address for the Pod
+    ipam_response=$(/opt/cni/bin/host-local <<<"$ipam_netconf")
+    # Example host-local response:
+    # {
+    #   "cniVersion": "0.3.1",
+    #   "ips": [
+    #     {
+    #       "version": "4",
+    #       "address": "20.0.0.4/24",
+    #       "gateway": "20.0.0.1"
+    #     }
+    #   ],
+    #   "dns": {}
+    # }
 
-  # Enable host interface and add it to the bridge in the default netns
-	ip link set "$host_ifname" up master cni0 
+    # Extract the IP address that the IPAM plugin selected for the Pod
+    pod_ip=$(jq -r '.ips[0].address' <<<"$ipam_response")
 
-  # Enable Pod interface and add it to the pod netns
-	ip link set "$CNI_IFNAME" up netns "$CNI_CONTAINERID"
+    # Pod netns: assign the selected IP address to the Pod-end of the pair
+    ip netns exec "$CNI_CONTAINERID" ip addr add "$pod_ip" "$CNI_IFNAME"
 
-  # Assign IP address to pod interface in Pod netns
-  # TODO: maybe this is done by the runtime (kubelet) => no, supposed to be done by one of the CNI plugins
-	ip netns exec $CNI_CONTAINERID ip addr add $pod_ip $CNI_IFNAME
-  
-  # Add a default gateway route to the Pod netns
-  # TODO: maybe this is done by the runtime if the result declares the 'routes' field => no, supposed to be done by one of the CNI plugins
-	ip netns exec $CNI_CONTAINERID ip route add default via $gateway_ip dev $CNI_IFNAME 
+    # Write response by adding 'interfaces' field to IPAM plugin response
+    jq ". += {
+          interfaces: [
+            {
+              name: \"$CNI_IFNAME\",
+              sandbox: \"$CNI_NETNS\"
+            }
+          ]
+        } |
+        .ips[0] += {
+          interface: 0
+        }" <<<"$ipam_response"
+    ;;
 
-  # Write response (IPAM response plus 'interfaces' field)
-  jq ". + {interfaces: [{\"name\": \"$CNI_IFNAME\", \"sandbox\": \"$CNI_NETNS\"}]} | .cniVersion = \"0.4.0\"" <<<"$ipam_response"
-  ;;
+  # Invoked by kubelet during Pod deletion (before deleting the Pod's netns).
+  # Note: since the kubelet will delete the entire network namespace, it is not
+  # necessary to delete the network resources that were created by ADD because
+  # they will be automatically deleted when the network namespace is deleted.
+  DEL)
+    # Invoke host-local IPAM plugin to un-reserve the Pod's IP address
+    /opt/cni/bin/host-local <<<"$ipam_netconf"
+    ;;
 
-# Called by the kubelet in the process of deleting a Pod (before deleting the
-# network namespace of this Pod)
-DEL)
-  # Since the kubelet will delete the Pod's network namespace, all the resources
-  # that were created by ADD will be deleted too.
-
-  # Release IP address of deleted Pod
-  # TODO: set CNI_COMMAND=VERSION
-  # TODO: reuse NetConf for host-local, just add 'ipam' field
-  /opt/cni/bin/host-local 
-  ;;
-
-VERSION)
-  echo '{"cniVersion":"0.3.1","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1"]}'
-  ;;
+  # Return implemented and supported versions of CNI specification
+  VERSION)
+    echo '{"cniVersion":"0.3.1","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1"]}'
+    ;;
 esac
