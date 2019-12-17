@@ -10,10 +10,11 @@
 
 # Example NetConf:
 # {
-#   "cniVersion": "0.4.0",
+#   "cniVersion": "0.3.1",
 #   "name": "my-pod-network",
 #   "type": "my-cni-plugin",
-#   "myPodCidrRange": "20.0.0.0/24"
+#   "myPodCidrRange": "20.0.0.0/24",
+#   "myBridgeIp": "20.0.0.1"
 # }
 netconf=$(cat /dev/stdin)
 
@@ -109,22 +110,7 @@ DEL)
   /opt/cni/bin/host-local 
   ;;
 
-CHECK)
-  ;;
-
 VERSION)
-  echo '{"cniVersion":"0.4.0","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1","0.4.0"]}'
-;;
-
-*)
-  cat <<EOF
-{
-  "cniVersion": "0.3.1",
-  "code": 4,
-  "msg": "Invalid environment variable",
-  "details": "Invalid value for CNI_COMMAND: $CNI_COMMAND"
-}
-EOF
-  exit 1
+  echo '{"cniVersion":"0.3.1","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1"]}'
   ;;
 esac
