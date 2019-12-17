@@ -1,5 +1,24 @@
 #!/bin/bash
 
+# TODO:
+# Tasks of the CNI plugin:
+# 0. Create bridge in default netns
+# 1. Create network interface in Pod namespace and assign it an IP address => DONE
+# 2. Ensure the following types of connectivity (all types include vice versa direction)
+#    1. Pod <=> agent on node                 : Pod => node (bridge is default gateway for Pods), node => Pod (default route created in default namespace)
+#    2. Pod ot other Pod on same node         : Needs FORWARD ACCEPT rules in iptables of default netns (packets: Pod netns => bridge in default netns => Pod netns)
+#    3. Pod to other Pod on different node    : Needs route in default netns (from bridge to other node)
+#    4. Pod to destinations outside cluster   : Needs NAT in the default netns (IP Masquerade)
+# 
+# It seems that the bridge plugin (which this plugin tries to imitate) also specifically includes items 0, 2.2, and 2.4 (1 and 2.1 are obvious, not sure about 2.3).
+# This means, the bridge plugin also creates the bridge if it doesn't exist and sets up NAT and iptable rules.
+# => Add this to this CNI plugin: a section that checks if a given setting already exists and implements it, if it doesn't.
+#
+# NAT vs IP Masquerade: 
+#   IP Masquerade is one type (and the most common type) of NAT. So much that when we speak of NAT, we actually mean IP Masquerade.
+#   https://www.dslreports.com/forum/r31309035-IP-Masquerade-vs-NAT
+
+
 # Read NetConf
 netconf=$(cat /dev/stdin)
 # Example NetConf:
