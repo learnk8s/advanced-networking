@@ -18,6 +18,30 @@
 #   IP Masquerade is one type (and the most common type) of NAT. So much that when we speak of NAT, we actually mean IP Masquerade.
 #   https://www.dslreports.com/forum/r31309035-IP-Masquerade-vs-NAT
 
+# ADD in bridge plugin:
+# - Creates a bridge if it doesn't exist ('ip link add cni0 type bridge', 'ip link set cni0 up'): setupBridge(), ensureBridge()
+# - Creates veth pair, moves one end to host netns other to Pod netns, enables both devices: setupVeth()
+# - Call IPAM plugin with identical argumnets (env vars and NetConf), save result
+# - Add 'routes' field to IPAM response with default route to bridge: calcGateways()
+# - Add IP address from IPAM result to Pod-end of veth pair: ConfigureIface() (github.com/containernetworking/plugins/pkg/ipam)
+# - Create routes that was added to IPAM response in Pod netns (default route to bridge): ConfigureIface() (github.com/containernetworking/plugins/pkg/ipam) => solves 2.1
+# - Add IP address to bridge: ensureAddr()
+# - Set the hardware address of the bridge: ensureAddr()
+# - Enable IP forwarding (write "1" into /proc/sys/net/ipv4/ip_forward): enableIPForward()
+# - Install iptables rules: setupIPMasq() (github.com/containernetworking/plugins/pkg/ip)
+#   - POSTROUTING chain in "nat" table: ACCEPT packets from Pod network (on this host) to Pod network (on this host) => solves 2.2
+#   - POSTROUTING chain in "nat" table: MASQUERADE packets from Pod network (on this host) to anywhere (except multicast address 224.0.0.0/4) => solves 2.4
+
+# bridge plugin:
+# - 'interfaces' field of result includes 'name' and 'mac' (https://github.com/containernetworking/plugins/blob/655116585396cc26ca973db2d5daef66d821ad90/plugins/main/bridge/bridge.go#L346)
+# - 'interfaces' field of result includes all three interfaces: Pod-end of veth pair, host-end of veth pair, and bridge
+# - 'ips' and 'routes' field or result is directly taken from IPAM result
+
+# Test: install bridge plugin on cluster and test which connections work:
+#   1. Pod to node agent => should work
+#   2. Pod to other Pod on same node => should work
+#   3. Pod to other Pod on different node => does it work?
+#   4. Pod to destination outside the cluster => should work
 
 # Read NetConf
 netconf=$(cat /dev/stdin)
