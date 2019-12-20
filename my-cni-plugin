@@ -37,11 +37,23 @@
 # - 'interfaces' field of result includes all three interfaces: Pod-end of veth pair, host-end of veth pair, and bridge
 # - 'ips' and 'routes' field or result is directly taken from IPAM result
 
-# Test: install bridge plugin on cluster and test which connections work:
-#   1. Pod to node agent => should work
-#   2. Pod to other Pod on same node => should work
-#   3. Pod to other Pod on different node => does it work?
-#   4. Pod to destination outside the cluster => should work
+# TODO:
+#   - Create bridge if it doesn't exist (assign it an IP address)
+#   - Create iptable rules in default netns, if they don't exist yet:
+#     - Allow communication between Pods on same node and between Pods on different nodes
+#         iptables -A FORWARD -s <PodCIDR> -j ACCEPT
+#         iptables -A FORWARD -s <PodCIDR> -j ACCEPT
+#       The PodCIDR must be of the whole Pod network, not only of the subnet for this node
+#     - Set up NAT
+#         iptables -t nat -A POSTROUTING -s <PodCIDR> ! -o <BridgeName> -j MASQUERADE
+#       The PodCIDR must be of the subnet of this node only
+#       Explanation about !: traffic coming from PodCIDR and destined for the bridge
+#       if from one pod to another pod on the same node. There should be no NAT
+#       Question: shouldn't there also be an exception fro traffic comfing from
+#       PodCIDR and going to the Pod network in general (including anothe node)?
+#
+# What the plugin can't do (but the plugin should actually do this):
+# Create GCP routes for each host for the PodCIDRs of each other host (to this host)
 
 # Read NetConf
 netconf=$(cat /dev/stdin)
@@ -50,9 +62,7 @@ netconf=$(cat /dev/stdin)
 #   "cniVersion": "0.3.1",
 #   "name": "my-pod-network",
 #   "type": "my-cni-plugin",
-#   "myPodCidrRange": "20.0.0.0/24",
-#   "myBridgeIp": "20.0.0.1",
-#   "myBridgeName": "cni0"
+#   "myPodCidr": "20.0.0.0/24"
 # }
 
 # Log the entire input for this plugin invocation
