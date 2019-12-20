@@ -98,10 +98,23 @@ EOF
   #------------------------------------------------------------------------------#
 
   if grep -q "$MASTER_EXTERNAL_IP" <<<$(kubectl cluster-info); then
-    echo -e 'Yay! You can access your cluster now.\n\nTry it:\n\n$kubectl get nodes'
+    cat <<EOF
+
+*******************************************
+😃 Yay! You can access your cluster now. 😃
+*******************************************
+
+Just set the following environment variable:
+
+export KUBECONFIG=$(pwd)/"$kubeconfig"
+
+Then, access your cluster:
+
+$ kubectl get nodes
+EOF
     kubectl get nodes
   else
-    echo "Something went wrong :("
+    echo "Oops, something went wrong 🤔"
   fi
 }
 
@@ -111,7 +124,7 @@ down() {
   gcloud compute firewall-rules delete "$firewall_ingress" "$firewall_internal"
   gcloud compute networks subnets delete "$subnet"
   gcloud compute networks delete "$vpc"
-  rm "$KUBECONFIG"
+  rm -f "$KUBECONFIG"
   unset KUBECONFIG
 }
 
