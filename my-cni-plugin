@@ -55,6 +55,10 @@
 # What the plugin can't do (but the plugin should actually do this):
 # Create GCP routes for each host for the PodCIDRs of each other host (to this host)
 
+# Parameters
+bridge_name=cni0
+state_file=/var/lib/cni/setup_done
+
 # Read NetConf
 netconf=$(cat /dev/stdin)
 # Example NetConf:
@@ -62,7 +66,8 @@ netconf=$(cat /dev/stdin)
 #   "cniVersion": "0.3.1",
 #   "name": "my-pod-network",
 #   "type": "my-cni-plugin",
-#   "myPodCidr": "20.0.0.0/24"
+#   "myPodNetwork": "200.200.0.0/16",
+#   "myPodSubnet": "200.200.1.0/24"
 # }
 
 # Log the entire input for this plugin invocation
@@ -76,14 +81,13 @@ $netconf
 EOF
 
 # Extract values from NetConf
-pod_cidr_range=$(jq -r ".myPodCidrRange" <<<"$netconf")
-bridge_ip=$(jq -r ".myBridgeIp" <<<"$netconf")
-bridge_name=$(jq -r ".myBridgeName" <<<"$netconf")
+pod_network=$(jq -r ".myPodNetwork" <<<"$netconf")
+pod_subnet=$(jq -r ".myPodSubnet" <<<"$netconf")
 
 # Add 'ipam' field to a copy of NetConf for the host-local IPAM plugin
 ipam_netconf=$(jq ". += {
   ipam: {
-    subnet: \"$pod_cidr_range\",
+    subnet: \"$pod_subnet\",
     gateway: \"$bridge_ip\"
   }
 }" <<<"$netconf")
@@ -92,6 +96,50 @@ case "$CNI_COMMAND" in
 
   # Invoked by kubelet during Pod creation (after creating a netns for the Pod)
   ADD)
+
+    # Invoke host-local IPAM plugin
+    ipam_response=$(/opt/cni/bin/host-local <<<"$ipam_netconf")
+    # Example host-local response:
+    # {
+    #   "cniVersion": "0.3.1",
+    #   "ips": [
+    #     {
+    #       "version": "4",
+    #       "address": "20.0.0.4/24",
+    #       "gateway": "20.0.0.1"
+    #     }
+    #   ],
+    #   "dns": {}
+    # }
+
+    # Pod IP address selected by IPAM plugin
+    pod_ip=$(jq -r '.ips[0].address' <<<"$ipam_response")
+
+    # Gateway IP address selected by IPAM plugin, which is used for the bridge
+    bridge_ip=$(jq -r '.ips[0].gateway' <<<"$ipam_response")
+
+    # One-time setup
+    if [[ ! -f "$state_file" ]]; then
+
+      # 1. Create bridge if it doesn't exist
+      ip link add "$bridge_name" type bridge
+      ip link set "$bridge_name" up
+      ip address add "$bridge_ip"/"${pod_ip#*/}" dev "$bridge_name"
+
+      # 2.Allow forwarding packets between Pods through bridge
+      iptables -A FORWARD -s "$pod_network" -j ACCEPT
+      iptables -A FORWARD -d "$pod_network" -j ACCEPT
+
+      # 3. Set up NAT
+      iptables -t nat -A POSTROUTING -s "$pod_subnet" ! -o "$bridge_name" -j MASQUERADE
+
+      # 4. Set up routes between nodes for Pod subnets?????
+
+      # Mark one-time setup as being done for future invocations
+      mkdir -p $(dirname "$state_file")
+      touch "$state_file"
+    fi
+
     # Make the Pod netns discoverable by 'ip' as $CNI_CONTAINERID
     mkdir -p /var/run/netns/ && ln -s "$CNI_NETNS" /var/run/netns/"$CNI_CONTAINERID"
 
@@ -110,23 +158,7 @@ case "$CNI_COMMAND" in
     # Pod netns: add a default route to the bridge via the Pod-end of the pair
     ip netns exec "$CNI_CONTAINERID" ip route add default via "$bridge_ip" dev "$CNI_IFNAME"
 
-    # Invoke host-local IPAM plugin to select an IP address for the Pod
-    ipam_response=$(/opt/cni/bin/host-local <<<"$ipam_netconf")
-    # Example host-local response:
-    # {
-    #   "cniVersion": "0.3.1",
-    #   "ips": [
-    #     {
-    #       "version": "4",
-    #       "address": "20.0.0.4/24",
-    #       "gateway": "20.0.0.1"
-    #     }
-    #   ],
-    #   "dns": {}
-    # }
-
-    # Extract the IP address that the IPAM plugin selected for the Pod
-    pod_ip=$(jq -r '.ips[0].address' <<<"$ipam_response")
+  
 
     # Pod netns: assign the selected IP address to the Pod-end of the pair
     ip netns exec "$CNI_CONTAINERID" ip addr add "$pod_ip" "$CNI_IFNAME"
