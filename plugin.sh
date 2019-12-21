@@ -37,7 +37,7 @@ install() {
     echo "Installing to "$node"..."
 
     # Install plugin executable to /opt/cni/bin
-    echo gcloud compute scp "$plugin_exec" root@"$node":/opt/cni/bin
+    gcloud compute scp "$plugin_exec" root@"$node":/opt/cni/bin
 
     # CIDR range of this node's Pod subnet
     pod_node_subnet=$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}')
@@ -47,10 +47,8 @@ install() {
     jsonnet -V podNet="$pod_net" -V podNodeSubnet="$pod_node_subnet" "$plugin_config" >"$tmp"
 
     # Install plugin configuration to /etc/cni/net.d
-    echo gcloud compute ssh root@"$node" --command "mkdir -p /etc/cni/net.d"
-    echo gcloud compute scp "$tmp" root@"$node":/etc/cni/net.d
-
-    cat "$tmp"
+    gcloud compute ssh root@"$node" --command "mkdir -p /etc/cni/net.d"
+    gcloud compute scp "$tmp" root@"$node":/etc/cni/net.d
   done
 }
 
