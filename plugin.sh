@@ -10,21 +10,47 @@ worker1=my-k8s-worker-1
 worker2=my-k8s-worker-2
 
 install() {
-  # Depends on jsonnet to fill in Pod CIDR range in plugin configuration
+
+  # Check jsonnet dependeny
   if ! which -s jsonnet; then
     echo "Please install jsonnet:"
     [[ "$OSTYPE" =~ darwin ]] && echo "  brew install jsonnet"
     [[ "$OSTYPE" =~ linux ]] && echo "  sudo snap install jsonnet"
+    exit 1
   fi
+
+  # Check jq dependeny
+  if ! which -s jq; then
+    echo "Please install jq:"
+    [[ "$OSTYPE" =~ darwin ]] && echo "  brew install jq"
+    [[ "$OSTYPE" =~ linux ]] && echo "  sudo apt-get install jq"
+    exit 1
+  fi
+
+  # CIDR range of the cluster's Pod network
+  pod_net=$(kubectl get pod kube-controller-manager-"$master" -n kube-system -o json |
+    jq -r '.spec.containers[0].command[] | select(. | contains("--cluster-cidr"))' |
+    sed -rn 's|[^0-9]*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]/[0-9][0-9]?)[^0-9]*|\1|p')
+
+  # Upload plugin  executable and (customised) configuration to each node
   for node in "$master" "$worker1" "$worker2"; do
     echo "Installing to "$node"..."
+
     # Install plugin executable to /opt/cni/bin
-    gcloud compute scp "$plugin_exec" root@"$node":/opt/cni/bin
-    # Install plugin configuration /etc/cni/net.d
+    echo gcloud compute scp "$plugin_exec" root@"$node":/opt/cni/bin
+
+    # CIDR range of this node's Pod subnet
+    pod_node_subnet=$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}')
+
+    # Customise plugin configuration in temporary file
     tmp=$(mktemp -d)/"${plugin_config%.jsonnet}"
-    jsonnet -V podCIDR=$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}') "$plugin_config" >"$tmp"
-    gcloud compute ssh root@"$node" --command "mkdir -p /etc/cni/net.d"
-    gcloud compute scp "$tmp" root@"$node":/etc/cni/net.d
+    jsonnet -V podNet="$pod_net" -V podNodeSubnet="$pod_node_subnet" "$plugin_config" >"$tmp"
+
+    # Install plugin configuration to /etc/cni/net.d
+    echo gcloud compute ssh root@"$node" --command "mkdir -p /etc/cni/net.d"
+    echo gcloud compute scp "$tmp" root@"$node":/etc/cni/net.d
+
+    cat "$tmp"
   done
 }
 

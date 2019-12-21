@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -e
-
 #------------------------------------------------------------------------------#
 # Parameters
 #------------------------------------------------------------------------------#
@@ -14,11 +12,12 @@ master=my-k8s-master
 worker1=my-k8s-worker-1
 worker2=my-k8s-worker-2
 kubeconfig=my-kubeconfig
-host_cidr=10.0.0.0/16
-pod_cidr=200.200.0.0/16
+host_net=10.0.0.0/16
+pod_net=200.200.0.0/16
 
 # Create cluster
 up() {
+  set -e
 
   #------------------------------------------------------------------------------#
   # TODO: create new project and create all resources in this project
@@ -29,8 +28,8 @@ up() {
   #------------------------------------------------------------------------------#
 
   gcloud compute networks create "$vpc" --subnet-mode custom
-  gcloud compute networks subnets create "$subnet" --network "$vpc" --range "$host_cidr"
-  gcloud compute firewall-rules create "$firewall_internal" --network "$vpc" --allow tcp,udp,icmp --source-ranges "$host_cidr"
+  gcloud compute networks subnets create "$subnet" --network "$vpc" --range "$host_net"
+  gcloud compute firewall-rules create "$firewall_internal" --network "$vpc" --allow tcp,udp,icmp --source-ranges "$host_net"
   gcloud compute firewall-rules create "$firewall_ingress" --network "$vpc" --allow tcp:22,tcp:6443,icmp
   gcloud compute instances create "$master" \
       --machine-type n1-standard-2 \
@@ -78,7 +77,7 @@ EOF
   MASTER_IP=$(gcloud compute instances describe "$master" --format='value(networkInterfaces[0].accessConfigs[0].natIP)')
 
   # Run 'kubeadm init' on master node, capture 'kubeadm join' command
-  kubeadm_join=$(gcloud compute ssh "$master" --command "sudo kubeadm init --apiserver-cert-extra-sans=\"$MASTER_IP\" --pod-network-cidr=\"$pod_cidr\"" | tail -n 2)
+  kubeadm_join=$(gcloud compute ssh "$master" --command "sudo kubeadm init --apiserver-cert-extra-sans=\"$MASTER_IP\" --pod-network-cidr=\"$pod_net\"" | tail -n 2)
 
   # Run 'kubeadm join' on worker nodes
   for node in "$worker1" "$worker2"; do
@@ -104,9 +103,9 @@ EOF
 😃 Yay! You can access your cluster now. 😃
 *******************************************
 
-Just set the following environment variable:
+Set the following environment variable:
 
-export KUBECONFIG=$(pwd)/"$kubeconfig"
+👉 👉 export KUBECONFIG=$(pwd)/$kubeconfig 👈 👈 
 
 Then, access your cluster:
 
