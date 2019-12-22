@@ -21,6 +21,13 @@ up() {
 
   #------------------------------------------------------------------------------#
   # TODO: create new project and create all resources in this project
+  # Maybe not: can run into quota issues, project ID must be globally unique,
+  # must store project ID somewhere to be able to delete this project in the
+  # 'down' command. Solution: just give advice in description to optionally
+  # create a new project before starting:
+  #   gcloud projects create my-k8s-$RANDOM --set-as-default
+  # Then, when finished with the lab, delete the entire project with:
+  #   gcloud projects delete my-k8s-<random_number>
   #------------------------------------------------------------------------------#
 
   #------------------------------------------------------------------------------#
@@ -43,8 +50,12 @@ up() {
       --image-family ubuntu-1804-lts \
       --image-project ubuntu-os-cloud \
       --can-ip-forward
-  # Allow firewall rules to settle (SSH access fails if trying to early)
-  sleep 10
+
+  # Wait for SSH access to succeed before proceeding (may take up to 30 sec.)
+  while ! gcloud compute ssh "$master" --command "echo test" &>/dev/null; do
+    echo "Waiting for SSH access..."
+    sleep 10
+  done
 
   #------------------------------------------------------------------------------#
   # Install kubeadm on VM instances
@@ -119,10 +130,10 @@ EOF
 
 # Tear down cluster
 down() {
-  gcloud compute instances delete "$master" "$worker1" "$worker2"
-  gcloud compute firewall-rules delete "$firewall_ingress" "$firewall_internal"
-  gcloud compute networks subnets delete "$subnet"
-  gcloud compute networks delete "$vpc"
+  gcloud -q compute instances delete "$master" "$worker1" "$worker2"
+  gcloud -q compute firewall-rules delete "$firewall_ingress" "$firewall_internal"
+  gcloud -q compute networks subnets delete "$subnet"
+  gcloud -q compute networks delete "$vpc"
   rm -f "$KUBECONFIG"
   unset KUBECONFIG
 }
