@@ -36,7 +36,7 @@ up() {
 
   gcloud compute networks create "$vpc" --subnet-mode custom
   gcloud compute networks subnets create "$subnet" --network "$vpc" --range "$host_net"
-  gcloud compute firewall-rules create "$firewall_internal" --network "$vpc" --allow tcp,udp,icmp --source-ranges "$host_net"
+  gcloud compute firewall-rules create "$firewall_internal" --network "$vpc" --allow tcp,udp,icmp --source-ranges "$host_net","$pod_net"
   gcloud compute firewall-rules create "$firewall_ingress" --network "$vpc" --allow tcp:22,tcp:6443,icmp
   gcloud compute instances create "$master" \
       --machine-type n1-standard-2 \
@@ -61,8 +61,8 @@ up() {
   # Install kubeadm on VM instances
   #------------------------------------------------------------------------------#
 
-  script=$(mktemp)
-  cat <<EOF >"$script"
+  install_kubeadm=$(mktemp)
+  cat <<EOF >"$install_kubeadm"
 #!/bin/bash
 
 sudo apt-get update
@@ -74,7 +74,7 @@ sudo apt-get install -y kubeadm
 EOF
 
   for node in "$master" "$worker1" "$worker2"; do
-    gcloud compute scp "$script" "$node":install-kubeadm.sh
+    gcloud compute scp "$install_kubeadm" "$node":install-kubeadm.sh
     gcloud compute ssh "$node" --command "chmod +x install-kubeadm.sh"
     gcloud compute ssh "$node" --command ./install-kubeadm.sh
   done
@@ -94,6 +94,12 @@ EOF
   for node in "$worker1" "$worker2"; do
     gcloud compute ssh root@"$node" --command "$kubeadm_join"
   done
+
+  #------------------------------------------------------------------------------#
+  # Create Pod network routes between nodes
+  #------------------------------------------------------------------------------#
+
+  # TODO: 200.200.2.0/24 => 10.0.0.4, 200.200.1.0/24 => 10.0.0.3, etc.
 
   #------------------------------------------------------------------------------#
   # Set up kubectl access

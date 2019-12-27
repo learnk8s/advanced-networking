@@ -87,7 +87,7 @@ Try to ping the following connections:
     ping 200.200.1.3
     ```
 
-1. Another Pod on a different node:
+2. Another Pod on a different node:
 
     ```bash
     ping 200.200.2.4
@@ -98,3 +98,23 @@ Try to ping the following connections:
     ```bash
     ping 198.41.0.4
     ```
+
+## Test notes
+
+Test the following types of connections. For each connection, check the IP packet source and destination IP address of both the sender and receiver. They should be the same for both the sender and receiver (which means that there is no NAT taking place).
+
+- Pod to same Pod
+- Pod to other Pod on same node
+- Pod to other Pod on a different node
+
+- Pod to process on same node
+- Process to Pod on same node
+- Pod to process on a different node
+- Process to Pod on a different node
+
+- Pod to Pod in host namespace on same node
+- Pod in host namespace to Pod on same node
+- Pod to Pod in host namespace on a different node
+- Pod in host namespace to Pod on a different node
+
+- Pod to external destination (echo.nmap.org = 45.33.32.156)
