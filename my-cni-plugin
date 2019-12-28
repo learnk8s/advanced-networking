@@ -98,7 +98,7 @@ host_net=$(jq -r ".myHostNet" <<<"$netconf")
 pod_net=$(jq -r ".myPodNet" <<<"$netconf")
 pod_node_subnet=$(jq -r ".myPodNodeSubnet" <<<"$netconf")
 
-# Create NetConf copy with added 'ipam' field for the host-local IPAM plugin
+# Add 'ipam' field to a copy of NetConf for the host-local IPAM plugin
 ipam_netconf=$(jq ". += {
   ipam: {
     subnet: \"$pod_node_subnet\",
@@ -128,11 +128,11 @@ case "$CNI_COMMAND" in
     # }
     log "IPAM response: $ipam_response"
 
-    # Pod and gateway (bridge) IP address selected by IPAM plugin
+    # Extract Pod and gateway (bridge) IP address selected by IPAM plugin
     pod_ip=$(jq -r '.ips[0].address' <<<"$ipam_response")
     bridge_ip=$(jq -r '.ips[0].gateway' <<<"$ipam_response")
 
-    # Do one-time setup if this is the first invocation of the plugin
+    # Do one-time setup if it hasn't yet been done
     if mkdir "$setup_done" &>/dev/null; then
       log "Doing setup"
 
@@ -168,11 +168,11 @@ case "$CNI_COMMAND" in
       # "all Pods can communicate with all other Pods without using network address translation (NAT)."
       # However, if I replace this rule with '-A POSTROUTING -s 200.200.2.0/24 ! -d 200.200.1.0/24 -j MASQUERADE' a Pod on 200.200.2.0/24 cannot
       # reach a Pod on 200.200.1.0/24 at all. Same if '-d 200.200.0.0/16'.
-      iptables -t nat -N MY_MASQUERADE
-      iptables -t nat -A MY_MASQUERADE -d "$pod_net" -j RETURN
-      iptables -t nat -A MY_MASQUERADE -d "$host_net" -j RETURN
-      iptables -t nat -A MY_MASQUERADE -j MASQUERADE
-      iptables -t nat -A POSTROUTING -s "$pod_node_subnet" -j MY_MASQUERADE
+      iptables -t nat -N MY_CNI_MASQUERADE
+      iptables -t nat -A MY_CNI_MASQUERADE -d "$pod_net" -j RETURN
+      iptables -t nat -A MY_CNI_MASQUERADE -d "$host_net" -j RETURN
+      iptables -t nat -A MY_CNI_MASQUERADE -j MASQUERADE
+      iptables -t nat -A POSTROUTING -s "$pod_node_subnet" -j MY_CNI_MASQUERADE
 
 
       # 4. Set up routes between nodes for Pod subnets?????

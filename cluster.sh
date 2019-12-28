@@ -81,7 +81,7 @@ EOF
 
 
   #------------------------------------------------------------------------------#
-  # Install Kubernetes
+  # Install Kubernetes on VM instances
   #------------------------------------------------------------------------------#
 
   # Retrieve external IP address of master VM instance
@@ -96,13 +96,17 @@ EOF
   done
 
   #------------------------------------------------------------------------------#
-  # Create Pod network routes between nodes
+  # Create Pod network routes across nodes
   #------------------------------------------------------------------------------#
 
-  # TODO: 200.200.2.0/24 => 10.0.0.4, 200.200.1.0/24 => 10.0.0.3, etc.
+  for node in "$master" "$worker1" "$worker2"; do
+    node_ip=$(kubectl get node "$node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+    pod_node_subnet=$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}')
+    gcloud compute routes create to-pods-on-"$node" --network="$vpc" --destination-range="$pod_node_subnet" --next-hop-address="$node_ip"
+  done
 
   #------------------------------------------------------------------------------#
-  # Set up kubectl access
+  # Download and customise kubeconfig file
   #------------------------------------------------------------------------------#
 
   gcloud compute scp root@"$master":/etc/kubernetes/admin.conf "$kubeconfig"
@@ -120,11 +124,13 @@ EOF
 😃 Yay! You can access your cluster now. 😃
 *******************************************
 
-Set the following environment variable:
+First, set the following environment variable:
 
 👉 👉 export KUBECONFIG=$(pwd)/$kubeconfig 👈 👈 
 
-Then, access your cluster:
+Then, you can access your cluster as usual.
+
+For example:
 
 $ kubectl get nodes
 EOF
@@ -134,8 +140,10 @@ EOF
   fi
 }
 
-# Tear down cluster
+# Delete all resources and settings created by 'up'
 down() {
+  set -B  # Ensure brace expansion is enabled
+  gcloud -q compute routes delete to-pods-on-{"$master","$worker1","$worker2"}
   gcloud -q compute instances delete "$master" "$worker1" "$worker2"
   gcloud -q compute firewall-rules delete "$firewall_ingress" "$firewall_internal"
   gcloud -q compute networks subnets delete "$subnet"
