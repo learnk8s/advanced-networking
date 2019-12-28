@@ -5,7 +5,7 @@ metadata:
 spec:
   containers:
   - name: ubuntu
-    image: weibeld/ubuntu-networking
+    image: learnk8s/advanced-networking
     command: ["nping", "--echo-server=public", "--interface=eth0"]
 ---
 apiVersion: v1
@@ -15,7 +15,7 @@ metadata:
 spec:
   containers:
   - name: ubuntu
-    image: weibeld/ubuntu-networking
+    image: learnk8s/advanced-networking
     command: ["nping", "--echo-server=public", "--interface=eth0"]
 ---
 apiVersion: v1
@@ -25,7 +25,7 @@ metadata:
 spec:
   containers:
   - name: ubuntu
-    image: weibeld/ubuntu-networking
+    image: learnk8s/advanced-networking
     command: ["nping", "--echo-server=public", "--interface=eth0"]
 ---
 apiVersion: v1
@@ -35,5 +35,49 @@ metadata:
 spec:
   containers:
   - name: ubuntu
-    image: weibeld/ubuntu-networking
+    image: learnk8s/advanced-networking
     command: ["nping", "--echo-server=public", "--interface=eth0"]
+# ---
+# apiVersion: v1
+# kind: Pod
+# metadata:
+#   name: pod-host-net-1
+# spec:
+#   hostNetwork: true
+#   containers:
+#   - name: ubuntu
+#     image: learnk8s/advanced-networking
+#     command: ["nping", "--echo-server=public", "--interface=ens4"]
+# ---
+# apiVersion: v1
+# kind: Pod
+# metadata:
+#   name: pod-host-net-2
+# spec:
+#   hostNetwork: true
+#   containers:
+#   - name: ubuntu
+#     image: learnk8s/advanced-networking
+#     command: ["nping", "--echo-server=public", "--interface=ens4"]
+# ---
+# apiVersion: v1
+# kind: Pod
+# metadata:
+#   name: pod-host-net-3
+# spec:
+#   hostNetwork: true
+#   containers:
+#   - name: ubuntu
+#     image: learnk8s/advanced-networking
+#     command: ["nping", "--echo-server=public", "--interface=ens4"]
+# ---
+# apiVersion: v1
+# kind: Pod
+# metadata:
+#   name: pod-host-net-4
+# spec:
+#   hostNetwork: true
+#   containers:
+#   - name: ubuntu
+#     image: learnk8s/advanced-networking
+#     command: ["nping", "--echo-server=public", "--interface=ens4"]

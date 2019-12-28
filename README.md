@@ -45,11 +45,13 @@ Deploy the four Pods defined in `pods.yaml` to the cluster:
 kubectl apply -f pods.yaml
 ```
 
-Verify that there are two Pods running on each worker node:
+Verify that all Pods have an IP address and that there are two Pods running on each worker node:
 
 ```bash
 kubectl get pods -o wide
 ```
+
+> If the IP address of some of the Pods is `<none>`, just wait about a minute and then list the Pods again.
 
 Exec into one of the Pods:
 
@@ -100,6 +102,14 @@ Try to ping the following connections:
     ```
 
 ## Test notes
+
+### Pod to Pod communication: normal Pods
+
+### Pod to Pod communication: host network Pods
+
+### Pod to node agent communication
+
+### External communication
 
 Test the following types of connections. For each connection, check the IP packet source and destination IP address of both the sender and receiver. They should be the same for both the sender and receiver (which means that there is no NAT taking place).
 

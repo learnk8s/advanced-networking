@@ -96,7 +96,24 @@ EOF
   done
 
   #------------------------------------------------------------------------------#
-  # Create Pod network routes across nodes
+  # Download and customise kubeconfig file
+  #------------------------------------------------------------------------------#
+
+  gcloud compute scp root@"$master":/etc/kubernetes/admin.conf "$kubeconfig"
+  sed -i -r "s#[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:6443#$MASTER_IP:6443#" "$kubeconfig"
+  export KUBECONFIG=$(pwd)/"$kubeconfig"
+
+  #------------------------------------------------------------------------------#
+  # Verify cluster access from local machine
+  #------------------------------------------------------------------------------#
+
+  if ! grep -q "$MASTER_EXTERNAL_IP" <<<$(kubectl cluster-info); then
+    echo "Hmm, can't access your cluster... 🤔"
+    exit 1
+  fi
+
+  #------------------------------------------------------------------------------#
+  # Create inter-node Pod network routes
   #------------------------------------------------------------------------------#
 
   for node in "$master" "$worker1" "$worker2"; do
@@ -106,38 +123,26 @@ EOF
   done
 
   #------------------------------------------------------------------------------#
-  # Download and customise kubeconfig file
+  # Done!
   #------------------------------------------------------------------------------#
 
-  gcloud compute scp root@"$master":/etc/kubernetes/admin.conf "$kubeconfig"
-  sed -i -r "s#[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:6443#$MASTER_IP:6443#" "$kubeconfig"
-  export KUBECONFIG=$(pwd)/"$kubeconfig"
-
-  #------------------------------------------------------------------------------#
-  # Test access
-  #------------------------------------------------------------------------------#
-
-  if grep -q "$MASTER_EXTERNAL_IP" <<<$(kubectl cluster-info); then
-    cat <<EOF
+  cat <<EOF
 
 *******************************************
 😃 Yay! You can access your cluster now. 😃
 *******************************************
 
-First, set the following environment variable:
+But first you have to set the following environment variable:
 
 👉 👉 export KUBECONFIG=$(pwd)/$kubeconfig 👈 👈 
 
-Then, you can access your cluster as usual.
+Then you can access your cluster as usual.
 
 For example:
 
 $ kubectl get nodes
 EOF
-    kubectl get nodes
-  else
-    echo "Oops, something went wrong 🤔"
-  fi
+  kubectl get nodes
 }
 
 # Delete all resources and settings created by 'up'
@@ -149,7 +154,17 @@ down() {
   gcloud -q compute networks subnets delete "$subnet"
   gcloud -q compute networks delete "$vpc"
   rm -f "$KUBECONFIG"
-  unset KUBECONFIG
+  cat <<EOF
+
+***************************
+🗑️  All resources deleted 🗑️
+***************************
+
+Run the following command to remove even the last traces:
+
+👉 👉 unset KUBECONFIG 👈 👈 
+
+EOF
 }
 
 usage() {
