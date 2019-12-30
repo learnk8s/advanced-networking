@@ -66,7 +66,7 @@ up() {
 #!/bin/bash
 
 sudo apt-get update
-sudo apt-get install -y docker.io apt-transport-https curl jq
+sudo apt-get install -y docker.io apt-transport-https curl
 curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
 echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
 sudo apt-get update
@@ -79,9 +79,8 @@ EOF
     gcloud compute ssh "$node" --command ./install-kubeadm.sh
   done
 
-
   #------------------------------------------------------------------------------#
-  # Install Kubernetes on VM instances
+  # Install Kubernetes
   #------------------------------------------------------------------------------#
 
   # Retrieve external IP address of master VM instance
@@ -93,6 +92,14 @@ EOF
   # Run 'kubeadm join' on worker nodes
   for node in "$worker1" "$worker2"; do
     gcloud compute ssh root@"$node" --command "$kubeadm_join"
+  done
+
+  #------------------------------------------------------------------------------#
+  # Install additional dependencies on VM instances
+  #------------------------------------------------------------------------------#
+
+  for node in "$master" "$worker1" "$worker2"; do
+    gcloud compute ssh "$node" --command "sudo apt-get install jq nmap"
   done
 
   #------------------------------------------------------------------------------#

@@ -99,12 +99,7 @@ pod_net=$(jq -r ".myPodNet" <<<"$netconf")
 pod_node_subnet=$(jq -r ".myPodNodeSubnet" <<<"$netconf")
 
 # Add 'ipam' field to a copy of NetConf for the host-local IPAM plugin
-ipam_netconf=$(jq ". += {
-  ipam: {
-    subnet: \"$pod_node_subnet\",
-    gateway: \"$bridge_ip\"
-  }
-}" <<<"$netconf")
+ipam_netconf=$(jq ". += {ipam: {subnet: \"$pod_node_subnet\"}}" <<<"$netconf")
 
 case "$CNI_COMMAND" in
 
