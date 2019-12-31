@@ -36,8 +36,6 @@ up() {
 
   gcloud compute networks create "$vpc" --subnet-mode custom
   gcloud compute networks subnets create "$subnet" --network "$vpc" --range "$host_net"
-  gcloud compute firewall-rules create "$firewall_internal" --network "$vpc" --allow tcp,udp,icmp --source-ranges "$host_net","$pod_net"
-  gcloud compute firewall-rules create "$firewall_ingress" --network "$vpc" --allow tcp:22,tcp:6443,icmp
   gcloud compute instances create "$master" \
       --machine-type n1-standard-2 \
       --subnet "$subnet" \
@@ -50,6 +48,8 @@ up() {
       --image-family ubuntu-1804-lts \
       --image-project ubuntu-os-cloud \
       --can-ip-forward
+  gcloud compute firewall-rules create "$firewall_internal" --network "$vpc" --allow tcp,udp,icmp --source-ranges "$host_net","$pod_net"
+  gcloud compute firewall-rules create "$firewall_ingress" --network "$vpc" --allow tcp:22,tcp:6443
 
   # Wait for SSH access to succeed before proceeding (may take up to 30 sec.)
   while ! gcloud compute ssh "$master" --command "echo test" &>/dev/null; do
@@ -95,14 +95,6 @@ EOF
   done
 
   #------------------------------------------------------------------------------#
-  # Install additional dependencies on VM instances
-  #------------------------------------------------------------------------------#
-
-  for node in "$master" "$worker1" "$worker2"; do
-    gcloud compute ssh "$node" --command "sudo apt-get install jq nmap"
-  done
-
-  #------------------------------------------------------------------------------#
   # Download and customise kubeconfig file
   #------------------------------------------------------------------------------#
 
@@ -127,6 +119,14 @@ EOF
     node_ip=$(kubectl get node "$node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
     pod_node_subnet=$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}')
     gcloud compute routes create to-pods-on-"$node" --network="$vpc" --destination-range="$pod_node_subnet" --next-hop-address="$node_ip"
+  done
+
+  #------------------------------------------------------------------------------#
+  # Install additional dependencies on VM instances
+  #------------------------------------------------------------------------------#
+
+  for node in "$master" "$worker1" "$worker2"; do
+    gcloud compute ssh "$node" --command "sudo apt-get install jq nmap"
   done
 
   #------------------------------------------------------------------------------#
