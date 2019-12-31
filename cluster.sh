@@ -107,7 +107,7 @@ EOF
   for node in "$master" "$worker1" "$worker2"; do
     node_ip=$(kubectl get node "$node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
     pod_node_subnet=$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}')
-    gcloud compute routes create to-pods-on-"$node" --network="$vpc" --destination-range="$pod_node_subnet" --next-hop-address="$node_ip"
+    gcloud compute routes create "$node" --network="$vpc" --destination-range="$pod_node_subnet" --next-hop-address="$node_ip"
   done
 
   #------------------------------------------------------------------------------#
@@ -143,8 +143,7 @@ EOF
 
 # Delete all resources and settings created by 'up'
 down() {
-  set -B  # Ensure brace expansion is enabled
-  gcloud -q compute routes delete to-pods-on-{"$master","$worker1","$worker2"}
+  gcloud -q compute routes delete "$master" "$worker1" "$worker2"
   gcloud -q compute instances delete "$master" "$worker1" "$worker2"
   gcloud -q compute firewall-rules delete "$firewall_ingress" "$firewall_internal"
   gcloud -q compute networks subnets delete "$subnet"
