@@ -20,17 +20,6 @@ up() {
   set -e
 
   #------------------------------------------------------------------------------#
-  # TODO: create new project and create all resources in this project
-  # Maybe not: can run into quota issues, project ID must be globally unique,
-  # must store project ID somewhere to be able to delete this project in the
-  # 'down' command. Solution: just give advice in description to optionally
-  # create a new project before starting:
-  #   gcloud projects create my-k8s-$RANDOM --set-as-default
-  # Then, when finished with the lab, delete the entire project with:
-  #   gcloud projects delete my-k8s-<random_number>
-  #------------------------------------------------------------------------------#
-
-  #------------------------------------------------------------------------------#
   # Create GCP infrastructure
   #------------------------------------------------------------------------------#
 
