@@ -115,7 +115,7 @@ EOF
   #------------------------------------------------------------------------------#
 
   for node in "$master" "$worker1" "$worker2"; do
-    gcloud compute ssh "$node" --command "sudo apt-get install jq nmap"
+    gcloud compute ssh "$node" --command "sudo apt-get install -y jq nmap"
   done
 
   #------------------------------------------------------------------------------#
