@@ -4,6 +4,8 @@
 # Parameters
 #------------------------------------------------------------------------------#
 
+host_network=10.0.0.0/16
+pod_network=200.200.0.0/16
 vpc=my-k8s-vpc
 subnet=my-k8s-subnet
 firewall_internal=my-k8s-internal
@@ -11,9 +13,7 @@ firewall_ingress=my-k8s-ingress
 master=my-k8s-master
 worker1=my-k8s-worker-1
 worker2=my-k8s-worker-2
-kubeconfig=my-kubeconfig
-host_net=10.0.0.0/16
-pod_net=200.200.0.0/16
+kubeconfig=~/my-kubeconfig
 
 # Create cluster
 up() {
@@ -24,7 +24,7 @@ up() {
   #------------------------------------------------------------------------------#
 
   gcloud compute networks create "$vpc" --subnet-mode custom
-  gcloud compute networks subnets create "$subnet" --network "$vpc" --range "$host_net"
+  gcloud compute networks subnets create "$subnet" --network "$vpc" --range "$host_network"
   gcloud compute instances create "$master" \
       --machine-type n1-standard-2 \
       --subnet "$subnet" \
@@ -37,8 +37,8 @@ up() {
       --image-family ubuntu-1804-lts \
       --image-project ubuntu-os-cloud \
       --can-ip-forward
-  gcloud compute firewall-rules create "$firewall_internal" --network "$vpc" --allow tcp,udp,icmp --source-ranges "$host_net","$pod_net"
   gcloud compute firewall-rules create "$firewall_ingress" --network "$vpc" --allow tcp:22,tcp:6443
+  gcloud compute firewall-rules create "$firewall_internal" --network "$vpc" --allow tcp,udp,icmp --source-ranges "$host_network","$pod_network"
 
   # Wait for SSH access to succeed before proceeding (may take up to 30 sec.)
   while ! gcloud compute ssh "$master" --command "echo test" &>/dev/null; do
@@ -55,7 +55,7 @@ up() {
 #!/bin/bash
 
 sudo apt-get update
-sudo apt-get install -y docker.io apt-transport-https curl
+sudo apt-get install -y docker.io apt-transport-https curl jq nmap
 curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
 echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
 sudo apt-get update
@@ -72,11 +72,11 @@ EOF
   # Install Kubernetes
   #------------------------------------------------------------------------------#
 
-  # Retrieve external IP address of master VM instance
+  # Retrieve master node external IP address
   MASTER_IP=$(gcloud compute instances describe "$master" --format='value(networkInterfaces[0].accessConfigs[0].natIP)')
 
-  # Run 'kubeadm init' on master node, capture 'kubeadm join' command
-  kubeadm_join=$(gcloud compute ssh "$master" --command "sudo kubeadm init --apiserver-cert-extra-sans=\"$MASTER_IP\" --pod-network-cidr=\"$pod_net\"" | tail -n 2)
+  # Run 'kubeadm init' on master node, and capture 'kubeadm join' command
+  kubeadm_join=$(gcloud compute ssh "$master" --command "sudo kubeadm init --pod-network-cidr=\"$pod_network\" --apiserver-cert-extra-sans=\"$MASTER_IP\"" | tail -n 2)
 
   # Run 'kubeadm join' on worker nodes
   for node in "$worker1" "$worker2"; do
@@ -89,33 +89,25 @@ EOF
 
   gcloud compute scp root@"$master":/etc/kubernetes/admin.conf "$kubeconfig"
   sed -i -r "s#[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:6443#$MASTER_IP:6443#" "$kubeconfig"
-  export KUBECONFIG=$(pwd)/"$kubeconfig"
+  export KUBECONFIG=$kubeconfig
 
   #------------------------------------------------------------------------------#
   # Verify cluster access from local machine
   #------------------------------------------------------------------------------#
 
-  if ! grep -q "$MASTER_EXTERNAL_IP" <<<$(kubectl cluster-info); then
+  if ! grep -q "$MASTER_IP" <<<$(kubectl cluster-info); then
     echo "Hmm, can't access your cluster... 🤔"
     exit 1
   fi
 
   #------------------------------------------------------------------------------#
-  # Create inter-node Pod network routes
+  # Create routes for inter-node Pod-to-Pod communication
   #------------------------------------------------------------------------------#
 
   for node in "$master" "$worker1" "$worker2"; do
     node_ip=$(kubectl get node "$node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
-    pod_node_subnet=$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}')
-    gcloud compute routes create "$node" --network="$vpc" --destination-range="$pod_node_subnet" --next-hop-address="$node_ip"
-  done
-
-  #------------------------------------------------------------------------------#
-  # Install additional dependencies on VM instances
-  #------------------------------------------------------------------------------#
-
-  for node in "$master" "$worker1" "$worker2"; do
-    gcloud compute ssh "$node" --command "sudo apt-get install -y jq nmap"
+    pod_subnet=$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}')
+    gcloud compute routes create "$node" --network="$vpc" --destination-range="$pod_subnet" --next-hop-address="$node_ip"
   done
 
   #------------------------------------------------------------------------------#
@@ -130,7 +122,7 @@ EOF
 
 But first you have to set the following environment variable:
 
-👉 👉 export KUBECONFIG=$(pwd)/$kubeconfig 👈 👈 
+👉 👉 export KUBECONFIG=$kubeconfig 👈 👈 
 
 Then you can access your cluster as usual.
 

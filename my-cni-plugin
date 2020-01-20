@@ -18,9 +18,9 @@ netconf=$(cat /dev/stdin)
 #   "cniVersion": "0.3.1",
 #   "name": "my-pod-network",
 #   "type": "my-cni-plugin",
-#   "myHostNet": "10.0.0.0/16",
-#   "myPodNet": "200.200.0.0/16",
-#   "myPodNodeSubnet": "200.200.1.0/24"
+#   "myHostNetwork": "10.0.0.0/16",
+#   "myPodNetwork": "200.200.0.0/16",
+#   "myPodSubnet": "200.200.1.0/24"
 # }
 
 log() {
@@ -39,12 +39,12 @@ EOF
 )"
 
 # Extract values from NetConf
-host_net=$(jq -r ".myHostNet" <<<"$netconf")
-pod_net=$(jq -r ".myPodNet" <<<"$netconf")
-pod_node_subnet=$(jq -r ".myPodNodeSubnet" <<<"$netconf")
+host_network=$(jq -r ".myHostNetwork" <<<"$netconf")
+pod_network=$(jq -r ".myPodNetwork" <<<"$netconf")
+pod_subnet=$(jq -r ".myPodSubnet" <<<"$netconf")
 
 # Add 'ipam' field to a copy of NetConf for the host-local IPAM plugin
-ipam_netconf=$(jq ". += {ipam: {subnet: \"$pod_node_subnet\"}}" <<<"$netconf")
+ipam_netconf=$(jq ". += {ipam: {subnet: \"$pod_subnet\"}}" <<<"$netconf")
 
 case "$CNI_COMMAND" in
 
@@ -79,18 +79,18 @@ case "$CNI_COMMAND" in
       # Create and enable bridge and assigne IP address to it
       ip link add "$bridge_name" type bridge
       ip link set "$bridge_name" up
-      ip address add "$bridge_ip"/"${pod_node_subnet#*/}" dev "$bridge_name"
+      ip address add "$bridge_ip"/"${pod_subnet#*/}" dev "$bridge_name"
 
       # Allow packets to/from Pods to pass through default network namespace
-      iptables -A FORWARD -s "$pod_net" -j ACCEPT
-      iptables -A FORWARD -d "$pod_net" -j ACCEPT
+      iptables -A FORWARD -s "$pod_network" -j ACCEPT
+      iptables -A FORWARD -d "$pod_network" -j ACCEPT
 
       # Enable NAT *only* for traffic going out of the cluster
       iptables -t nat -N MY_CNI_MASQUERADE
-      iptables -t nat -A MY_CNI_MASQUERADE -d "$pod_net" -j RETURN
-      iptables -t nat -A MY_CNI_MASQUERADE -d "$host_net" -j RETURN
+      iptables -t nat -A MY_CNI_MASQUERADE -d "$pod_network" -j RETURN
+      iptables -t nat -A MY_CNI_MASQUERADE -d "$host_network" -j RETURN
       iptables -t nat -A MY_CNI_MASQUERADE -j MASQUERADE
-      iptables -t nat -A POSTROUTING -s "$pod_node_subnet" -j MY_CNI_MASQUERADE
+      iptables -t nat -A POSTROUTING -s "$pod_subnet" -j MY_CNI_MASQUERADE
 
       # If this plugin was used in a traditional physical network, then you
       # would need to set up the inter-node Pod network routes here.
@@ -138,10 +138,10 @@ case "$CNI_COMMAND" in
   # necessary to delete the network resources that were created by ADD because
   # they will be automatically deleted when the network namespace is deleted.
   DEL)
-    # Invoke host-local IPAM plugin to un-reserve the Pod's IP address
+    # Relase the Pod's IP address from the host-local IPAM plugin
     /opt/cni/bin/host-local <<<"$ipam_netconf"
 
-    # Delete the link pointing to the netns (because netns will be deleted too)
+    # Delete link to namespace file (which enables the namespace itself to be deleted)
     rm -f /var/run/netns/"$CNI_CONTAINERID"
     ;;
 
