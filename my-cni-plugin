@@ -29,6 +29,9 @@ log "CNI_COMMAND=$CNI_COMMAND, CNI_CONTAINERID=$CNI_CONTAINERID, CNI_NETNS=$CNI_
 # Prepare NetConf for host-local IPAM plugin (add 'ipam' field)
 ipam_netconf=$(jq ". += {ipam:{subnet:\"$pod_subnet\"}}" <<<"$netconf")
 
+# Parse CNI plugin exectuable directories (default /opt/cni/bin)
+IFS=: read -a cni_paths <<<"$CNI_PATH"
+
 # Execute the requested CNI operation
 case "$CNI_COMMAND" in
 
@@ -54,7 +57,7 @@ case "$CNI_COMMAND" in
     #   ],
     #   "dns": {}
     # }
-    ipam_response=$(/opt/cni/bin/host-local <<<"$ipam_netconf")
+    ipam_response=$("${cni_paths[0]%/}"/host-local <<<"$ipam_netconf")
 
     # Extract IP addresses for Pod and gateway (bridge) from IPAM response
     pod_ip=$(jq -r '.ips[0].address' <<<"$ipam_response")
@@ -141,7 +144,7 @@ case "$CNI_COMMAND" in
   #----------------------------------------------------------------------------#
   DEL)
     # Invoke host-local IPAM plugin to release IP address of Pod
-    /opt/cni/bin/host-local <<<"$ipam_netconf"
+    "${cni_paths[0]%/}"/host-local <<<"$ipam_netconf"
     # Delete named link to network namespace that was created by ADD
     rm -f /var/run/netns/"$CNI_CONTAINERID"
     ;;
