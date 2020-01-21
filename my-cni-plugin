@@ -1,19 +1,20 @@
 #!/bin/bash
 
+# Direct file descriptor 1 and 2 to log file, and file descriptor 3 to stdout
+log=/var/log/cni/my-cni-plugin.log
+mkdir -p "$(dirname "$log")"
+exec 3>&1
+exec &>>"$log"
+
+# Write line to log file
+log() { echo -e "$(date): $*"; }
+
 # Parameters
 bridge_name=cni0
 setup_done=/var/lib/cni/my-cni-plugin-setup-done
-logs=/var/log/cni/my-cni-plugin.log
-mkdir -p "$(dirname "$logs")" "$(dirname "$setup_done")"
+mkdir -p "$(dirname "$setup_done")"
 
-# Direct fd3 to stdout and fd1 and fd2 to a file, so commands write to the file
-# by default, and stdout receives only what's explicitly written to fd3.
-exec 3>&1
-exec &>>"$logs"
-
-# Read NetConf
-netconf=$(cat /dev/stdin)
-# Example NetConf:
+# Read NetConf from stdin and extract custom fields. Example NetConf:
 # {
 #   "cniVersion": "0.3.1",
 #   "name": "my-pod-network",
@@ -22,38 +23,31 @@ netconf=$(cat /dev/stdin)
 #   "myPodNetwork": "200.200.0.0/16",
 #   "myPodSubnet": "200.200.1.0/24"
 # }
-
-log() {
-  echo -e "\e[32$(date): $*\e[0m"
-}
-
-# Log the entire input for this plugin invocation
-log "$(cat <<EOF
-CNI_COMMAND=$CNI_COMMAND
-CNI_CONTAINERID=$CNI_CONTAINERID
-CNI_NETNS=$CNI_NETNS
-CNI_IFNAME=$CNI_IFNAME
-CNI_PATH=$CNI_PATH
-NetConf: $netconf
-EOF
-)"
-
-# Extract values from NetConf
+netconf=$(cat /dev/stdin)
 host_network=$(jq -r ".myHostNetwork" <<<"$netconf")
 pod_network=$(jq -r ".myPodNetwork" <<<"$netconf")
 pod_subnet=$(jq -r ".myPodSubnet" <<<"$netconf")
 
-# Add 'ipam' field to a copy of NetConf for the host-local IPAM plugin
-ipam_netconf=$(jq ". += {ipam: {subnet: \"$pod_subnet\"}}" <<<"$netconf")
+# Log environment variables and NetConf
+log "CNI_COMMAND=$CNI_COMMAND, CNI_CONTAINERID=$CNI_CONTAINERID, CNI_NETNS=$CNI_NETNS, CNI_IFNAME=$CNI_IFNAME, CNI_PATH=$CNI_PATH\n$netconf"
 
+# Prepare NetConf for host-local IPAM plugin (add 'ipam' field)
+ipam_netconf=$(jq ". += {ipam:{subnet:\"$pod_subnet\"}}" <<<"$netconf")
+
+# Execute the requested CNI operation
 case "$CNI_COMMAND" in
 
-  # Invoked by kubelet during Pod creation (after creating a netns for the Pod)
+  #----------------------------------------------------------------------------#
+  # Pod creation
+  #----------------------------------------------------------------------------#
   ADD)
 
-    # Invoke host-local IPAM plugin
-    ipam_response=$(/opt/cni/bin/host-local <<<"$ipam_netconf")
-    # Example host-local response:
+    #--------------------------------------------------------------------------#
+    # IPAM plugin
+    #--------------------------------------------------------------------------#
+
+    # Invoke host-local IPAM plugin to allocate IP address for Pod 
+    # Example response:
     # {
     #   "cniVersion": "0.3.1",
     #   "ips": [
@@ -65,10 +59,15 @@ case "$CNI_COMMAND" in
     #   ],
     #   "dns": {}
     # }
+    ipam_response=$(/opt/cni/bin/host-local <<<"$ipam_netconf")
 
-    # Extract Pod and gateway (bridge) IP address selected by IPAM plugin
+    # Extract IP addresses for Pod and gateway (bridge) from IPAM response
     pod_ip=$(jq -r '.ips[0].address' <<<"$ipam_response")
     bridge_ip=$(jq -r '.ips[0].gateway' <<<"$ipam_response")
+
+    #--------------------------------------------------------------------------#
+    # One-time setup
+    #--------------------------------------------------------------------------#
 
     # Do one-time setup if it hasn't yet been done
     if mkdir "$setup_done" &>/dev/null; then
@@ -76,10 +75,10 @@ case "$CNI_COMMAND" in
       # Delete bridge if it already exists (if reinstalling the plugin)
       ip link show "$bridge_name" &>/dev/null && ip link delete "$bridge_name"
 
-      # Create and enable bridge and assigne IP address to it
+      # Create bridge and assign IP address to it
       ip link add "$bridge_name" type bridge
-      ip link set "$bridge_name" up
       ip address add "$bridge_ip"/"${pod_subnet#*/}" dev "$bridge_name"
+      ip link set "$bridge_name" up
 
       # Allow packets to/from Pods to pass through default network namespace
       iptables -A FORWARD -s "$pod_network" -j ACCEPT
@@ -96,57 +95,56 @@ case "$CNI_COMMAND" in
       # would need to set up the inter-node Pod network routes here.
     fi
 
-    # Make the Pod netns discoverable by 'ip' as $CNI_CONTAINERID
-    mkdir -p /var/run/netns/ && ln -sf "$CNI_NETNS" /var/run/netns/"$CNI_CONTAINERID"
+    #--------------------------------------------------------------------------#
+    # Pod-specific setup
+    #--------------------------------------------------------------------------#
 
-    # Name of host-end of the veth pair (name of the Pod-end is $CNI_IFNAME)
+    # Create named link to Pod network namespace (for 'ip' command)
+    mkdir -p /var/run/netns/
+    ln -sf "$CNI_NETNS" /var/run/netns/"$CNI_CONTAINERID"
+
+    # Create veth pair in Pod network namespace
     host_ifname=veth$RANDOM
+    ip netns exec "$CNI_CONTAINERID" ip link add "$CNI_IFNAME" type veth peer name "$host_ifname"
 
-    # Create new veth pair
-    ip link add "$CNI_IFNAME" type veth peer name "$host_ifname"
+    # Move host-end of veth pair to default network namespace and connect to bridge
+    ip netns exec "$CNI_CONTAINERID" ip link set $host_ifname netns 1
+    ip link set "$host_ifname" master "$bridge_name" up
 
-    # Enable host-end of the pair and add it to the bridge
-    ip link set "$host_ifname" up master "$bridge_name"
-
-    # Enable Pod-end of the pair and put it into the Pod netns
-    ip link set "$CNI_IFNAME" up netns "$CNI_CONTAINERID"
-
-    # Assign the selected IP address to the Pod-end of the pair
+    # Set up Pod-end of veth pair (assign IP address selected by IPAM plugin)
     ip netns exec "$CNI_CONTAINERID" ip address add "$pod_ip" dev "$CNI_IFNAME"
+    ip netns exec "$CNI_CONTAINERID" ip link set "$CNI_IFNAME" up
     
-    # Add a default route to the bridge via the Pod-end of the pair
+    # Create default route to bridge in Pod network namespace
     ip netns exec "$CNI_CONTAINERID" ip route add default via "$bridge_ip" dev "$CNI_IFNAME"
 
-    # Write response by adding 'interfaces' field to IPAM plugin response
-    response=$(jq ". += {
-          interfaces: [
-            {
-              name: \"$CNI_IFNAME\",
-              sandbox: \"$CNI_NETNS\"
-            }
-          ]
-        } |
-        .ips[0] += {
-          interface: 0
-        }" <<<"$ipam_response")
-    log "ADD response: $response"
+    # Create response by adding 'interfaces' field to response of IPAM plugin 
+    response=$(jq ". += {interfaces:[{name:\"$CNI_IFNAME\",sandbox:\"$CNI_NETNS\"}]} | .ips[0] += {interface:0}" <<<"$ipam_response")
+
+    #--------------------------------------------------------------------------#
+    # Response
+    #--------------------------------------------------------------------------#
+
+    # Write response
+    log "Response:\n$response"
     echo "$response" >&3
     ;;
 
-  # Invoked by kubelet during Pod deletion (before deleting the Pod's netns).
-  # Note: since the kubelet will delete the entire network namespace, it is not
-  # necessary to delete the network resources that were created by ADD because
-  # they will be automatically deleted when the network namespace is deleted.
+  #----------------------------------------------------------------------------#
+  # Pod deletion
+  #----------------------------------------------------------------------------#
   DEL)
-    # Relase the Pod's IP address from the host-local IPAM plugin
+    # Invoke host-local IPAM plugin to release IP address of Pod
     /opt/cni/bin/host-local <<<"$ipam_netconf"
-
-    # Delete link to namespace file (which enables the namespace itself to be deleted)
+    # Delete named link to network namespace that was created by ADD
     rm -f /var/run/netns/"$CNI_CONTAINERID"
     ;;
 
-  # Return implemented and supported versions of CNI specification
+  #----------------------------------------------------------------------------#
+  # Report CNI specification version
+  #----------------------------------------------------------------------------#
   VERSION)
     echo '{"cniVersion":"0.3.1","supportedVersions":["0.1.0","0.2.0","0.3.0","0.3.1"]}' >&3
     ;;
+
 esac

@@ -65,7 +65,7 @@ install() {
 uninstall() {
   for node in "$master" "$worker1" "$worker2"; do
     echo "Uninstalling from "$node"..."
-    gcloud compute ssh root@"$node" --command "rm -rf '/opt/cni/bin/$plugin_executable' '/etc/cni/net.d/\"${netconf%.jsonnet}' '$plugin_logs' '$plugin_setup_done'"
+    gcloud compute ssh root@"$node" --command "rm -rf '/opt/cni/bin/$plugin_executable' '/etc/cni/net.d/${netconf%.jsonnet}' '$plugin_logs' '$plugin_setup_done'"
   done
 }
 
