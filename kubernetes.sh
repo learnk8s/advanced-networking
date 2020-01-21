@@ -10,7 +10,7 @@ worker1=my-k8s-worker-1
 worker2=my-k8s-worker-2
 kubeconfig=~/my-kubeconfig
 
-install() {
+up() {
 
   #------------------------------------------------------------------------------#
   # Install kubeadm
@@ -71,19 +71,19 @@ EOF
 😃 Kubernetes installed 😃
 **************************
 
-A kubeconfig file was added to your local machine. Please make the
-KUBECONFIG environment variable point to it:
+A kubeconfig file was added to your local machine. Please add it
+to your KUBECONFIG environment variable:
 
 👉 export KUBECONFIG=$kubeconfig
 
-Then you can access your cluster as usual, for example:
+Then, you can access your cluster as usual, for example:
 
 $ kubectl get nodes
 EOF
   kubectl get nodes
 }
 
-uninstall() {
+down() {
   for node in "$worker2" "$worker1" "$master"; do
     gcloud compute ssh root@"$node" --command "kubeadm reset -f"
   done
@@ -104,11 +104,11 @@ EOF
 
 usage() {
   echo "USAGE:"
-  echo "  $(basename $0) install|uninstall"
+  echo "  $(basename $0) up|down"
 }
 
 case "$1" in
-  install) install;;
-  uninstall) uninstall;;
+  up) up;;
+  down) down;;
   *) usage && exit 1 ;;
 esac

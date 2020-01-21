@@ -14,7 +14,7 @@ subnet=my-k8s-subnet
 plugin_executable=my-cni-plugin
 netconf_template=my-cni-plugin.conf.jsonnet
 
-install() {
+up() {
 
   # Check if kubectl uses the correct kubeconfig file
   if [[ ! "$(kubectl get nodes -o custom-columns=:.metadata.name --no-headers | sort)" == "$(echo -e "$master\n$worker1\n$worker2" | sort)" ]]; then
@@ -74,7 +74,7 @@ EOF
 
 # Uninstall the plugin from all the nodes. Note that this just removes the plugin
 # files and does NOT undo any settings made by the plugin.
-uninstall() {
+down() {
   for node in "$master" "$worker1" "$worker2"; do
     echo "Uninstalling from $node..."
     gcloud compute ssh root@"$node" --command "rm -rf '/opt/cni/bin/$plugin_executable' '/etc/cni/net.d/${netconf_template%.jsonnet}'"
@@ -93,11 +93,11 @@ EOF
 
 usage() {
   echo "USAGE:"
-  echo "  $(basename $0) install|uninstall"
+  echo "  $(basename $0) up|down"
 }
 
 case "$1" in
-  install) install ;;
-  uninstall) uninstall ;;
+  up) up;;
+  down) down;;
   *) usage && exit 1 ;;
 esac

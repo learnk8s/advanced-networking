@@ -14,7 +14,7 @@ master=my-k8s-master
 worker1=my-k8s-worker-1
 worker2=my-k8s-worker-2
 
-create() {
+up() {
   set -e
 
   gcloud compute networks create "$vpc" --subnet-mode custom
@@ -46,7 +46,14 @@ create() {
 😃 GCP infrastructure created 😃
 ********************************
 
-You can access your VM instances with:
+Created infrastructure:
+
+VPC network:    $vpc
+Subnet:         $subnet
+Firewall rules: $firewall_ingress, $firewall_internal
+VM instances:   $master, $worker1, $worker2
+
+You can log into your VM instances with:
 
 👉 gcloud compute ssh $master
 👉 gcloud compute ssh $worker1
@@ -55,7 +62,7 @@ You can access your VM instances with:
 EOF
 }
 
-delete() {
+down() {
   gcloud -q compute instances delete "$master" "$worker1" "$worker2"
   gcloud -q compute firewall-rules delete "$firewall_ingress" "$firewall_internal"
   gcloud -q compute networks subnets delete "$subnet"
@@ -72,11 +79,11 @@ EOF
 
 usage() {
   echo "USAGE:"
-  echo "  $(basename $0) create|delete"
+  echo "  $(basename $0) up|down"
 }
 
 case "$1" in
-  up) up ;;
-  down) down ;;
+  up) down;;
+  down) down;;
   *) usage && exit 1 ;;
 esac

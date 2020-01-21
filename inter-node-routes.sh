@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Create or delete the inter-node Pod-to-Pod communication routes to complete
+# Create or delete the inter-node Pod-to-Pod communication routes that complete
 # the functionality of the CNI plugin.
 #
 # Run this anytime after installing Kubernetes with kubernetes.sh
@@ -10,7 +10,7 @@ worker1=my-k8s-worker-1
 worker2=my-k8s-worker-2
 vpc=my-k8s-vpc
 
-create() {
+up() {
 
   # Check if kubectl uses the correct kubeconfig file
   if [[ ! "$(kubectl get nodes -o custom-columns=:.metadata.name --no-headers | sort)" == "$(echo -e "$master\n$worker1\n$worker2" | sort)" ]]; then
@@ -37,7 +37,7 @@ Your Pods should now be able to communicate with Pods on different nodes.
 EOF
 }
 
-delete() {
+down() {
   gcloud -q compute routes delete "$master" "$worker1" "$worker2"
   cat <<EOF
 
@@ -53,11 +53,11 @@ EOF
 
 usage() {
   echo "USAGE:"
-  echo "  $(basename $0) create|delete"
+  echo "  $(basename $0) up|down"
 }
 
 case "$1" in
-  create) create;;
-  delete) delete;;
+  up) up;;
+  down) down;;
   *) usage && exit 1 ;;
 esac
