@@ -1,18 +1,13 @@
 #!/bin/bash
 
-# Direct file descriptor 1 and 2 to log file, and file descriptor 3 to stdout
-log=/var/log/cni/my-cni-plugin.log
-mkdir -p "$(dirname "$log")"
+# Direct file descriptors 1 and 2 to log file, and file descriptor 3 to stdout
 exec 3>&1
-exec &>>"$log"
+exec &>>/var/log/my-cni-plugin.log
 
-# Write line to log file
-log() { echo -e "$(date): $*"; }
-
-# Parameters
-bridge_name=cni0
-setup_done=/var/lib/cni/my-cni-plugin-setup-done
-mkdir -p "$(dirname "$setup_done")"
+# Write line to log file (file descriptor 1 is redirected to log file)
+log() {
+  echo -e "$(date): $*"
+}
 
 # Read NetConf from stdin and extract custom fields. Example NetConf:
 # {
@@ -28,7 +23,7 @@ host_network=$(jq -r ".myHostNetwork" <<<"$netconf")
 pod_network=$(jq -r ".myPodNetwork" <<<"$netconf")
 pod_subnet=$(jq -r ".myPodSubnet" <<<"$netconf")
 
-# Log environment variables and NetConf
+# Write environment variables and NetConf to log file
 log "CNI_COMMAND=$CNI_COMMAND, CNI_CONTAINERID=$CNI_CONTAINERID, CNI_NETNS=$CNI_NETNS, CNI_IFNAME=$CNI_IFNAME, CNI_PATH=$CNI_PATH\n$netconf"
 
 # Prepare NetConf for host-local IPAM plugin (add 'ipam' field)
@@ -43,7 +38,7 @@ case "$CNI_COMMAND" in
   ADD)
 
     #--------------------------------------------------------------------------#
-    # IPAM plugin
+    # Invoke IPAM plugin
     #--------------------------------------------------------------------------#
 
     # Invoke host-local IPAM plugin to allocate IP address for Pod 
@@ -66,37 +61,50 @@ case "$CNI_COMMAND" in
     bridge_ip=$(jq -r '.ips[0].gateway' <<<"$ipam_response")
 
     #--------------------------------------------------------------------------#
-    # One-time setup
+    # Do one-time setup
     #--------------------------------------------------------------------------#
 
-    # Do one-time setup if it hasn't yet been done
-    if mkdir "$setup_done" &>/dev/null; then
+    # The lock provides mutual exclusivity (at most one process in the critical
+    # section) and synchronisation (no process reaches the Pod-specific setup
+    # before the one-time setup has been fully completed at least once).
+    {
+      # Acquire lock, or wait if it is already taken
+      flock 100
 
-      # Delete bridge if it already exists (if reinstalling the plugin)
-      ip link show "$bridge_name" &>/dev/null && ip link delete "$bridge_name"
+      #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+      # Begin of critical section
+      #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
-      # Create bridge and assign IP address to it
-      ip link add "$bridge_name" type bridge
-      ip address add "$bridge_ip"/"${pod_subnet#*/}" dev "$bridge_name"
-      ip link set "$bridge_name" up
+      # Create bridge only if it doesn't yet exist
+      if ! ip link show cni0 &>/dev/null; then
+        ip link add cni0 type bridge
+        ip address add "$bridge_ip"/"${pod_ip#*/}" dev cni0
+        ip link set cni0 up
+      fi
+    
+      # Create an iptables rule only if it doesn't yet exist
+      ensure() {
+        eval "$(sed 's/-A/-C/' <<<"$@")" &>/dev/null || eval "$@"
+      }
 
-      # Allow packets to/from Pods to pass through default network namespace
-      iptables -A FORWARD -s "$pod_network" -j ACCEPT
-      iptables -A FORWARD -d "$pod_network" -j ACCEPT
+      # Allow forwarding of packets in default network namespace to/from Pods
+      ensure iptables -A FORWARD -s "$pod_network" -j ACCEPT
+      ensure iptables -A FORWARD -d "$pod_network" -j ACCEPT
 
-      # Enable NAT *only* for traffic going out of the cluster
-      iptables -t nat -N MY_CNI_MASQUERADE
-      iptables -t nat -A MY_CNI_MASQUERADE -d "$pod_network" -j RETURN
-      iptables -t nat -A MY_CNI_MASQUERADE -d "$host_network" -j RETURN
-      iptables -t nat -A MY_CNI_MASQUERADE -j MASQUERADE
-      iptables -t nat -A POSTROUTING -s "$pod_subnet" -j MY_CNI_MASQUERADE
+      # Set up NAT for traffic leaving the cluster (replace Pod IP with node IP)
+      iptables -t nat -N MY_CNI_MASQUERADE &>/dev/null
+      ensure iptables -t nat -A MY_CNI_MASQUERADE -d "$pod_network" -j RETURN
+      ensure iptables -t nat -A MY_CNI_MASQUERADE -d "$host_network" -j RETURN
+      ensure iptables -t nat -A MY_CNI_MASQUERADE -j MASQUERADE
+      ensure iptables -t nat -A POSTROUTING -s "$pod_subnet" -j MY_CNI_MASQUERADE
 
-      # If this plugin was used in a traditional physical network, then you
-      # would need to set up the inter-node Pod network routes here.
-    fi
+      #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+      # End of critical section
+      #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+    } 100>/tmp/my-cni-plugin.lock
 
     #--------------------------------------------------------------------------#
-    # Pod-specific setup
+    # Do Pod-specific setup
     #--------------------------------------------------------------------------#
 
     # Create named link to Pod network namespace (for 'ip' command)
@@ -109,23 +117,21 @@ case "$CNI_COMMAND" in
 
     # Move host-end of veth pair to default network namespace and connect to bridge
     ip netns exec "$CNI_CONTAINERID" ip link set $host_ifname netns 1
-    ip link set "$host_ifname" master "$bridge_name" up
+    ip link set "$host_ifname" master cni0 up
 
-    # Set up Pod-end of veth pair (assign IP address selected by IPAM plugin)
+    # Assign IP address selected by IPAM plugin to Pod-end of veth pair
     ip netns exec "$CNI_CONTAINERID" ip address add "$pod_ip" dev "$CNI_IFNAME"
     ip netns exec "$CNI_CONTAINERID" ip link set "$CNI_IFNAME" up
     
     # Create default route to bridge in Pod network namespace
     ip netns exec "$CNI_CONTAINERID" ip route add default via "$bridge_ip" dev "$CNI_IFNAME"
 
+    #--------------------------------------------------------------------------#
+    # Return response
+    #--------------------------------------------------------------------------#
+
     # Create response by adding 'interfaces' field to response of IPAM plugin 
     response=$(jq ". += {interfaces:[{name:\"$CNI_IFNAME\",sandbox:\"$CNI_NETNS\"}]} | .ips[0] += {interface:0}" <<<"$ipam_response")
-
-    #--------------------------------------------------------------------------#
-    # Response
-    #--------------------------------------------------------------------------#
-
-    # Write response
     log "Response:\n$response"
     echo "$response" >&3
     ;;
