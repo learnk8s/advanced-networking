@@ -1,4 +1,8 @@
 #!/bin/bash
+#
+# Install or uninstall the CNI plugin on the Kubernetes cluster.
+#
+# Run this after installing Kubernetes with kubernetes.sh
 
 set -e
 
@@ -8,12 +12,16 @@ worker1=my-k8s-worker-1
 worker2=my-k8s-worker-2
 subnet=my-k8s-subnet
 plugin_executable=my-cni-plugin
-netconf=my-cni-plugin.conf.jsonnet
-plugin_logs=/var/log/cni/my-cni-plugin.log               # For uninstall only
-plugin_setup_done=/var/lib/cni/my-cni-plugin-setup-done  # For uninstall only
+netconf_template=my-cni-plugin.conf.jsonnet
 
-# Install CNI plugin to all nodes of the cluster
 install() {
+
+  # Check if kubectl uses the correct kubeconfig file
+  if [[ ! "$(kubectl get nodes -o custom-columns=:.metadata.name --no-headers | sort)" == "$(echo -e "$master\n$worker1\n$worker2" | sort)" ]]; then
+    echo "Error: trying to connect to the wrong cluster."
+    echo "       Did you set the KUBECONFIG environment variable?"
+    exit 1
+  fi
 
   # Check if dependencies are available
   if ! which -s jsonnet; then
@@ -29,13 +37,6 @@ install() {
     exit 1
   fi
 
-  # Check if the correct kubeconfig file is being used
-  if [[ ! "$(kubectl get nodes -o custom-columns=:.metadata.name --no-headers | sort)" == "$(echo -e "$master\n$worker1\n$worker2" | sort)" ]]; then
-    echo "Error: connecting to the wrong cluster."
-    echo "       Did you set the KUBECONFIG environment variable?"
-    exit 1
-  fi
-
   # Get host network and Pod network CIDR ranges
   host_network=$(gcloud compute networks subnets describe "$subnet" --format="value(ipCidrRange)")
   pod_network=$(kubectl get pod kube-controller-manager-"$master" -n kube-system -o json |
@@ -44,7 +45,6 @@ install() {
 
   # Install the CNI plugin executable and NetConf to all the nodes
   for node in "$master" "$worker1" "$worker2"; do
-    echo "Installing to "$node"..."
 
     # Get Pod subnet CIDR range of current node
     pod_subnet=$(kubectl get node "$node" -o jsonpath='{.spec.podCIDR}')
@@ -53,20 +53,42 @@ install() {
     gcloud compute scp "$plugin_executable" root@"$node":/opt/cni/bin
 
     # Customise NetConf and upload it to /etc/cni/net.d
-    tmp=$(mktemp -d)/"${netconf%.jsonnet}"
-    jsonnet -V hostNetwork="$host_network" -V podNetwork="$pod_network" -V podSubnet="$pod_subnet" "$netconf" >"$tmp"
+    tmp=$(mktemp -d)/"${netconf_template%.jsonnet}"
+    jsonnet -V hostNetwork="$host_network" -V podNetwork="$pod_network" -V podSubnet="$pod_subnet" "$netconf_template" >"$tmp"
     gcloud compute ssh root@"$node" --command "mkdir -p /etc/cni/net.d"
     gcloud compute scp "$tmp" root@"$node":/etc/cni/net.d
   done
+
+  cat <<EOF
+
+**************************
+😃 CNI plugin installed 😃
+**************************
+
+Your nodes should now gradually become ready:
+
+👉 kubectl get nodes
+
+EOF
 }
 
 # Uninstall the plugin from all the nodes. Note that this just removes the plugin
 # files and does NOT undo any settings made by the plugin.
 uninstall() {
   for node in "$master" "$worker1" "$worker2"; do
-    echo "Uninstalling from "$node"..."
-    gcloud compute ssh root@"$node" --command "rm -rf '/opt/cni/bin/$plugin_executable' '/etc/cni/net.d/${netconf%.jsonnet}' '$plugin_logs' '$plugin_setup_done'"
+    echo "Uninstalling from $node..."
+    gcloud compute ssh root@"$node" --command "rm -rf '/opt/cni/bin/$plugin_executable' '/etc/cni/net.d/${netconf_template%.jsonnet}'"
   done
+
+  cat <<EOF
+
+****************************
+🗑️  CNI plugin uninstalled 🗑️
+****************************
+
+Existing Pods keep working, but you can't create any new Pods.
+
+EOF
 }
 
 usage() {
