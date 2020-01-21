@@ -1,43 +1,75 @@
-# Advanced networking: the Container Network Interface (CNI)
+# Advanced networking lab — Building your own CNI plugin
 
-## The CNI plugin
+This repository contains the source code of the CNI plugin ([`my-cni-plugin`](https://github.com/learnk8s/advanced-networking/blob/master/my-cni-plugin)), as well as scripts for creating the Kubernetes cluster and installing the CNI plugin.
 
-- `my-cni-plugin` is the  plugin executable
-- `my-cni-plugin.conf.jsonnet` is the plugin [configuration](https://github.com/containernetworking/cni/blob/master/SPEC.md#network-configuration)
+## Usage of the scripts
 
-The plugin configuration is a [Jsonnet](https://jsonnet.org/) file since it contains some node-specific parameters.
+### Install
 
-## Creating the cluster
-
-To create the Kubernetes cluster (without a CNI plugin), use the `cluster.sh` script:
+#### 1. Create GCP infrastructure
 
 ```bash
-./cluster.sh up
+./infrastructure.sh up
 ```
 
-To tear down the cluster, use:
+#### 2. Install Kubernetes
 
 ```bash
-./cluster.sh down
+./kubernetes.sh up
 ```
 
-## Installing the CNI plugin
+All the nodes are `NotReady`, because there is no CNI plugin installed.
 
-To install the CNI plugin on each Kubernetes node, use the `plugin.sh` script:
+#### 3. Install the CNI plugin
 
 ```bash
-./plugin.sh install
+./cni-plugin.sh up
 ```
 
-> This script must be executed from the same directory as the plugin executable and config files.
+The nodes automatically become ready as the kubelet detects the CNI plugin.
 
-You can uninstall the plugin with:
+You may now deploy Pods, for example:
 
 ```bash
-./plugin.sh uninstall
+kubectl apply -f pods.yaml
 ```
 
-However, note that this just deletes the files from the nodes, it doesn't revert the settings made by the plugin if it has already been run (e.g. creation of the bridge).
+Note that the inter-node communication is provided external to the CNI plugin executable (see next step below). Thus, at the moment, Pods can communicate with Pods on the same node, but Pods **cannot** communicate with Pods on different nodes.
+
+Also the cluster-internal DNS doesn't work, since the DNS Pods cannot be reached.
+
+The next script fixes this.
+
+#### 4. Create inter-node communication routes
+
+```bash
+./inter-node-routes.sh up
+```
+
+Pods can now communicate with Pods on different nodes. Cluster-internal DNS also works.
+
+### Uninstall
+
+Each script has a `down` command that reverts the changes done by the `up` command. For example:
+
+```bash
+./inter-node-routes.sh down
+```
+
+You can execute and reexecute the `down` and `up` command according to the interdependencies of the scripts:
+
+```
+                        +------- kubernetes.sh <------------- cni-plugin.sh
+infrastructure.sh <-----|
+                        +------- inter-node-routes.sh
+```
+
+To tear down everything, it's enough to run the following two scripts:
+
+```bash
+./inter-node-routes.sh down
+./infrastructure.sh down
+```
 
 ## Testing the CNI plugin
 
