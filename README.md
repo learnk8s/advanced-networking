@@ -4,15 +4,25 @@ This repository contains the source code of the CNI plugin ([`my-cni-plugin`](ht
 
 ## Usage of the scripts
 
-### Install
+There are four helper scripts with the following interdependencies:
 
-#### 1. Create GCP infrastructure
+```
+                        +------- kubernetes.sh <------------- cni-plugin.sh
+infrastructure.sh <-----|
+                        +------- inter-node-routes.sh
+```
+
+For example, you can run `kubernetes.sh` only after running `infrastructure.sh`.
+
+### Installing
+
+#### 1. Creating the GCP infrastructure
 
 ```bash
 ./infrastructure.sh up
 ```
 
-#### 2. Install Kubernetes
+#### 2. Installing Kubernetes
 
 ```bash
 ./kubernetes.sh up
@@ -20,7 +30,7 @@ This repository contains the source code of the CNI plugin ([`my-cni-plugin`](ht
 
 All the nodes are `NotReady`, because there is no CNI plugin installed.
 
-#### 3. Install the CNI plugin
+#### 3. Installing the CNI plugin
 
 ```bash
 ./cni-plugin.sh up
@@ -40,7 +50,7 @@ Also the cluster-internal DNS doesn't work, since the DNS Pods cannot be reached
 
 The next script fixes this.
 
-#### 4. Create inter-node communication routes
+#### 4. Creating the inter-node communication routes
 
 ```bash
 ./inter-node-routes.sh up
@@ -48,7 +58,7 @@ The next script fixes this.
 
 Pods can now communicate with Pods on different nodes. Cluster-internal DNS also works.
 
-### Uninstall
+### Uninstalling
 
 Each script has a `down` command that reverts the changes done by the `up` command. For example:
 
@@ -58,11 +68,6 @@ Each script has a `down` command that reverts the changes done by the `up` comma
 
 You can execute and reexecute the `down` and `up` command according to the interdependencies of the scripts:
 
-```
-                        +------- kubernetes.sh <------------- cni-plugin.sh
-infrastructure.sh <-----|
-                        +------- inter-node-routes.sh
-```
 
 To tear down everything, it's enough to run the following two scripts:
 
