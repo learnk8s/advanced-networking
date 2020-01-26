@@ -23,14 +23,14 @@ host_network=$(jq -r ".myHostNetwork" <<<"$netconf")
 pod_network=$(jq -r ".myPodNetwork" <<<"$netconf")
 pod_subnet=$(jq -r ".myPodSubnet" <<<"$netconf")
 
-# Write environment variables and NetConf to log file
-log "CNI_COMMAND=$CNI_COMMAND, CNI_CONTAINERID=$CNI_CONTAINERID, CNI_NETNS=$CNI_NETNS, CNI_IFNAME=$CNI_IFNAME, CNI_PATH=$CNI_PATH\n$netconf"
-
 # Prepare NetConf for host-local IPAM plugin (add 'ipam' field)
 ipam_netconf=$(jq ". += {ipam:{subnet:\"$pod_subnet\"}}" <<<"$netconf")
 
 # Parse CNI plugin exectuable directories (default /opt/cni/bin)
 IFS=: read -a cni_paths <<<"$CNI_PATH"
+
+# Write environment variables and NetConf to log file
+log "CNI_COMMAND=$CNI_COMMAND, CNI_CONTAINERID=$CNI_CONTAINERID, CNI_NETNS=$CNI_NETNS, CNI_IFNAME=$CNI_IFNAME, CNI_PATH=$CNI_PATH\n$netconf"
 
 # Execute the requested CNI operation
 case "$CNI_COMMAND" in
@@ -51,8 +51,8 @@ case "$CNI_COMMAND" in
     #   "ips": [
     #     {
     #       "version": "4",
-    #       "address": "20.0.0.4/24",
-    #       "gateway": "20.0.0.1"
+    #       "address": "200.200.0.2/24",
+    #       "gateway": "200.200.0.1"
     #     }
     #   ],
     #   "dns": {}
@@ -81,7 +81,7 @@ case "$CNI_COMMAND" in
       # Create bridge only if it doesn't yet exist
       if ! ip link show cni0 &>/dev/null; then
         ip link add cni0 type bridge
-        ip address add "$bridge_ip"/"${pod_ip#*/}" dev cni0
+        ip address add "$bridge_ip"/"${pod_subnet#*/}" dev cni0
         ip link set cni0 up
       fi
     
@@ -119,7 +119,7 @@ case "$CNI_COMMAND" in
     ip netns exec "$CNI_CONTAINERID" ip link add "$CNI_IFNAME" type veth peer name "$host_ifname"
 
     # Move host-end of veth pair to default network namespace and connect to bridge
-    ip netns exec "$CNI_CONTAINERID" ip link set $host_ifname netns 1
+    ip netns exec "$CNI_CONTAINERID" ip link set "$host_ifname" netns 1
     ip link set "$host_ifname" master cni0 up
 
     # Assign IP address selected by IPAM plugin to Pod-end of veth pair

@@ -5,8 +5,8 @@ metadata:
 spec:
   containers:
   - name: ubuntu
-    image: learnk8s/advanced-networking
-    command: ["nping", "--echo-server=public", "--interface=eth0"]
+    image: weibeld/ubuntu-networking
+    command: ["sleep", "infinity"]
 ---
 apiVersion: v1
 kind: Pod
@@ -15,8 +15,8 @@ metadata:
 spec:
   containers:
   - name: ubuntu
-    image: learnk8s/advanced-networking
-    command: ["nping", "--echo-server=public", "--interface=eth0"]
+    image: weibeld/ubuntu-networking
+    command: ["sleep", "infinity"]
 ---
 apiVersion: v1
 kind: Pod
@@ -25,8 +25,8 @@ metadata:
 spec:
   containers:
   - name: ubuntu
-    image: learnk8s/advanced-networking
-    command: ["nping", "--echo-server=public", "--interface=eth0"]
+    image: weibeld/ubuntu-networking
+    command: ["sleep", "infinity"]
 ---
 apiVersion: v1
 kind: Pod
@@ -35,5 +35,5 @@ metadata:
 spec:
   containers:
   - name: ubuntu
-    image: learnk8s/advanced-networking
-    command: ["nping", "--echo-server=public", "--interface=eth0"]
+    image: weibeld/ubuntu-networking
+    command: ["sleep", "infinity"]
