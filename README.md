@@ -1,10 +1,24 @@
-# Advanced networking lab — Building your own CNI plugin
+# Advanced networking — Pod networking and CNI plugins
 
-This repository contains the source code of the CNI plugin ([`my-cni-plugin`](https://github.com/learnk8s/advanced-networking/blob/master/my-cni-plugin)), as well as scripts for creating the Kubernetes cluster and installing the CNI plugin.
+GitHub repository of the course [_Advanced networking — Pod networking and CNI plugins_](https://academy-dev.learnk8s.io/advanced-networking/intro) of the [Lernk8s Academy](https://learnk8s.io/academy).
 
-## Usage of the scripts
+The course contains a lab for building your own CNI plugin from scratch.
 
-There are four helper scripts with the following interdependencies:
+This repository contains:
+
+- The CNI plugin ([`my-cni-plugin`](https://github.com/learnk8s/advanced-networking/blob/master/my-cni-plugin))
+- Scripts for creating the Kubernetes cluster and installing the CNI plugin
+
+## Scripts
+
+There are four shell scripts:
+
+1. `infrastructure.sh`: create GCP infrastructure
+1. `kubernetes.sh`: install Kubernetes
+1. `cni-plugin.sh`: install CNI plugin
+1. `inter-node-routes.sh`: create GCP inter-node communication routes
+
+The scripts have the following interdependencies:
 
 ```
                         +------- kubernetes.sh <------------- cni-plugin.sh
@@ -12,69 +26,71 @@ infrastructure.sh <-----|
                         +------- inter-node-routes.sh
 ```
 
-For example, you can run `kubernetes.sh` only after running `infrastructure.sh`.
+That means, for example, `kubernetes.sh` must be run after `infrastructure.sh`, etc.
 
-### Installing
+Each script has `up` and `down` commands that do and undo the actions of the script.
 
-#### 1. Creating the GCP infrastructure
+## Using the scripts
+
+### `infrastructure.sh`
+
+Create the GCP resources for the Kubernetes cluster:
 
 ```bash
 ./infrastructure.sh up
 ```
 
-#### 2. Installing Kubernetes
+Delete the GCP resources:
+
+```bash
+./infrastructure.sh down
+```
+
+### `kubernetes.sh`
+
+Install Kubernetes on the GCP infrastructure:
 
 ```bash
 ./kubernetes.sh up
 ```
 
-All the nodes are `NotReady`, because there is no CNI plugin installed.
+Uninstall Kubernetes:
 
-#### 3. Installing the CNI plugin
+```bash
+./kubernetes.sh down
+```
+
+### `cni-plugin.sh`
+
+Install the CNI plugin on the Kubernetes cluster:
 
 ```bash
 ./cni-plugin.sh up
 ```
 
-The nodes automatically become ready as the kubelet detects the CNI plugin.
-
-You may now deploy Pods, for example:
+Uninstall the CNI plugin:
 
 ```bash
-kubectl apply -f pods.yaml
+./cni-plugin.sh down
 ```
 
-Note that the inter-node communication is provided external to the CNI plugin executable (see next step below). Thus, at the moment, Pods can communicate with Pods on the same node, but Pods **cannot** communicate with Pods on different nodes.
+**Caution:** the `down` command only removes the CNI plugin files but does not undo any settings made by the CNI plugin.
 
-Also the cluster-internal DNS doesn't work, since the DNS Pods cannot be reached.
+### `inter-node-routes.sh`
 
-The next script fixes this.
-
-#### 4. Creating the inter-node communication routes
+Create inter-node communication routes in the GCP subnet:
 
 ```bash
 ./inter-node-routes.sh up
 ```
 
-Pods can now communicate with Pods on different nodes. Cluster-internal DNS also works.
-
-### Uninstalling
-
-Each script has a `down` command that reverts the changes done by the `up` command. For example:
+Remove the inter-node communication routes:
 
 ```bash
 ./inter-node-routes.sh down
 ```
 
-You can execute and reexecute the `down` and `up` command according to the interdependencies of the scripts:
-
-
-To tear down everything, it's enough to run the following two scripts:
-
-```bash
-./inter-node-routes.sh down
-./infrastructure.sh down
-```
+**Note:** if you install the CNI plugin without creating the inter-node communication routes, then Pods on different nodes can't communicate with each other (Pods on the same node, however, can communicate). Also, the cluster DNS doesn't work if there are no inter-node communication routes. As soon as you install the routes, inter-node communication between all types of entities should work.
 
 ## Testing the CNI plugin
 
@@ -84,13 +100,11 @@ Deploy the four Pods defined in `pods.yaml` to the cluster:
 kubectl apply -f pods.yaml
 ```
 
-Verify that all Pods got an IP address and that there are two Pods running on each worker node:
+Verify that all Pods got an IP address and that two Pods are running on each worker node:
 
 ```bash
 kubectl get pods -o wide
 ```
-
-> If the IP address of some of the Pods is `<none>`, just wait about a minute and then list the Pods again.
 
 Exec into one of the Pods:
 
@@ -108,49 +122,56 @@ pod-3   200.200.2.5   my-k8s-worker-2   10.0.0.4
 pod-4   200.200.1.3   my-k8s-worker-1   10.0.0.3
 ```
 
-Probe the following connections with the `my-nping`  script that is available in the container:
+Verify the following connectivities with `ping`:
 
 1. To a Pod on the same node:
 
     ```bash
-    my-nping 200.200.1.3
+    ping 200.200.1.3
     ```
 
 1. To a Pod on a different node:
 
    ```bash
-   my-nping 200.200.2.4
+   ping 200.200.2.4
+   ```
+
+1. To the default network namespace of the same node:
+
+   ```bash
+   ping 10.0.0.3
+   ```
+
+1. To the default network namespace of a different node:
+
+   ```bash
+   ping 10.0.0.4
    ```
 
 1. To a destination outside the cluster:
 
     ```bash
-    my-nping echo.nmap.org
+    ping learnk8s.io
     ```
 
-You also have to test the connectivity form a process running directly on the node (like the kubelet) to the Pods. To do so, log into one of the nodes:
+You should also test the connectivity to the Pods from a process in the default network namespace of a node.
+
+To do so, log into one of the nodes:
 
 ```bash
 gcloud compute ssh root@my-k8s-worker-1
 ```
 
-And download the `my-nping` wrapper script:
-
-```bash
-curl https://raw.githubusercontent.com/learnk8s/docker-advanced-networking/master/my-nping >my-nping
-chmod +x my-nping
-```
-
-Now, test the following connections:
+Then verify the following connectivities with `ping`:
 
 1. To a Pod on the same node:
 
     ```bash
-    ./my-nping 200.200.1.2
+    ping 200.200.1.2
     ```
 
 1. To a Pod on a different node:
 
     ```bash
-    ./my-nping 200.200.2.4
+    ping 200.200.2.4
     ```
