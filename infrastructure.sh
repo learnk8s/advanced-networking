@@ -83,7 +83,7 @@ usage() {
 }
 
 case "$1" in
-  up) down;;
-  down) down;;
+  up) up ;;
+  down) down ;;
   *) usage && exit 1 ;;
 esac
